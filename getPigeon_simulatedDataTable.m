@@ -1,245 +1,196 @@
-function dataTable_ = getPigeon_simulatedDataTable(specs)
+function dataTable_ = getPigeon_simulatedDataTable(dataTable, options)
 %
 % Returns:
 %   dataTable_ as in getPigeon_dataTable
 %
 % Arguments:
-%   specs is either:
-%       dataTable     ... table of human data to mimic
-%       blockStructs  ... array of structs with (optional) substructs:
-%           blockArgs
-%           simArgs
+%   property/value pairs, see below
 
-% Defaults
+% Arguments
+arguments
+    dataTable
+    options.generativeMean = 0.05;
+    options.generativeSTD = 0.15;
+    options.numTrials = 600;
+    options.maxStepsPerTrial = 50;
+    options.boundMean = 0;
+    options.boundSTD = 0;
+    options.boundSlope = 0;
+    options.boundMax = 0.75;
+    options.NDTMin = 1;
+    options.NDTmax = 2;
+    options.lapseRate = 0;
+    options.boundType = 'given'; %'fixed', 'true', 'var', 'varBySNR'
+    options.stepsPerBlock = 600;
+    options.P2Psteps = 1;
+    options.P2Pcoins = 0;
+    options.coinsGainedPerCorrect = 1;
+    options.coinsLostPerError = 0;
+    options.stepsLostPerError = 0;
+    options.bounds = [];
+end
+
+% hard-coding in definitions of blocks 1-6 in Alice's data
 blockDefaults = struct( ...
-    'blockIndex',            nan, ... % if 1-6, use defaults
-    'numSubjects',           60, ...
-    'stepsPerBlock',         600, ...
-    'P2Psteps',              1, ...
-    'P2Pcoins',              0, ...
-    'coinsGainedPerCorrect', 1, ...
-    'coinsLostPerError',     0, ...
-    'stepsLostPerError',     0);
+    'stepsPerBlock',            {600 600 600 600 600 600}, ...
+    'P2Psteps',                 {1 1 1 1 1 1}, ...
+    'P2Pcoins',                 {0 0 0 0 0 0}, ...
+    'coinsGainedPerCorrect',    {1 1 1 1 1 1}, ...
+    'coinsLostPerError',        {0 4 0 0 4 0}, ...
+    'stepsLostPerError',        {0 0 30 0 0 30});
 
-simDefaults = struct( ...
-    'generativeMean',        0.05, ...
-    'generativeSTD',         0.15, ...
-    'numTrials',             610, ...
-    'maxStepsPerTrial',      50, ...
-    'boundMean',             0, ...
-    'boundSTD',              0, ...
-    'boundSlope',            0, ...
-    'boundMax',              0.75, ...
-    'NDTMin',                1, ...
-    'NDTmax',                3, ...
-    'lapseRate',             0.05);
-
-% Parse human data
-if istable(specs)
-    subjects = nonanunique(specs.subjectIndex);
+% Make blockSpecs -- matrix of option structs to run simulations
+%   rows are subjects
+%   columns are blocks
+% Check to build from existing data Table
+if nargin >= 1 && istable(dataTable)
+    subjects = nonanunique(dataTable.subjectIndex);
     numSubjects = length(subjects);
-    blocks = nonanunique(specs.blockIndex);
+    blocks = nonanunique(dataTable.blockIndex);
     numBlocks = length(blocks);
-    Lgood = specs.trialNumber & specs.RT>=0; % non-zero RT
-    bounds = nan(numSubjects,2);
-    blockStructs = struct;
+    Lgood = dataTable.trialNumber & dataTable.RT>=0; % non-zero RT
+    blockSpecs = repmat(options, numSubjects, numBlocks);    
+
+    % Loop through the blocks and subjects
     for bb = 1:numBlocks
+
+        % Add block defaults
+        for ff = fieldnames(blockDefaults)'
+            [blockSpecs(:,bb).(ff{:})] = deal(blockDefaults(blocks(bb)).(ff{:}));
+        end
+
+        % Loop through subject data
+        Lb = Lgood & dataTable.blockIndex==blocks(bb);
+        aSNRs = abs(dataTable.snr);
         for ss = 1:numSubjects
-            Lsb = Lgood & specs.blockIndex==blocks(bb) & specs.subjectIndex==subjects(ss);
-            bounds(ss,:) = [median(abs(specs.bound(Lsb)),'omitnan') ...
-                std(abs(specs.bound(Lsb)),'omitnan')];
+            Lbs = Lb & dataTable.subjectIndex==subjects(ss);
+            SNRs = nonanunique(aSNRs(Lbs));
+            blockSpecs(ss,bb).generativeMean = SNRs .* ...
+                blockSpecs(ss,bb).generativeSTD;
+            nSNRs = length(SNRs);
+            % parse bound type
+            switch blockSpecs(ss,bb).boundType
+                case 'given'
+                    blockSpecs(ss,bb).boundSTD = 0;
+                case 'fixed'
+                    absBounds = abs(dataTable.bound(Lbs));
+                    blockSpecs(ss,bb).boundMean = median(absBounds,'omitnan');
+                    blockSpecs(ss,bb).boundSTD = 0;
+                case 'true'
+                    blockSpecs(ss,bb).bounds = abs(dataTable.bound(Lbs));
+                case 'var'
+                    absBounds = abs(dataTable.bound(Lbs));
+                    blockSpecs(ss,bb).boundMean = median(absBounds,'omitnan');
+                    blockSpecs(ss,bb).boundSTD = std(absBounds,'omitnan');
+                case 'changepoint'
+                    Lpc = Lbs & (dataTable.DT < dataTable.changePoint);
+                    blockSpecs(ss,bb).changePoint = nonanunique(dataTable.changePoint(Lbs));
+                    blockSpecs(ss,bb).boundMean = NaN(options.maxStepsPerTrial,1);
+                    blockSpecs(ss,bb).boundMean(1:blockSpecs(ss,bb).changePoint-1) = median(dataTable.absBound(Lpc),'omitnan');
+                    blockSpecs(ss,bb).boundMean(blockSpecs(ss,bb).changePoint:end) = median(dataTable.absBound(~Lpc),'omitnan');
+                    blockSpecs(ss,bb).boundSTD = 0;
+                    % save both snrs
+                    blockSpecs(ss,bb).snrs = unique(aSNRs);
+                case 'counterfactual'
+                    Lpc = Lbs & (dataTable.RT > dataTable.changePoint);
+                    blockSpecs(ss,bb).boundMean = median(dataTable.absBound(Lpc),'omitnan');
+                    blockSpecs(ss,bb).boundSTD = 0;
+                otherwise % 'varBySNR'
+                    % Bound computed separately per snr
+                    blockSpecs(ss,bb).boundMean = nan(nSNRs,1);
+                    blockSpecs(ss,bb).boundSTD = nan(nSNRs,1);
+                    for mm = 1:nSNRs
+                        Lm = Lbs & aSNRs == SNRs(mm);
+                        absBounds = abs(dataTable.bound(Lm));
+                        blockSpecs(ss,bb).boundMean(mm) = median(absBounds,'omitnan');
+                        blockSpecs(ss,bb).boundSTD(mm) = std(absBounds,'omitnan');
+                    end
+            end
         end
-        blockStructs(bb).blockArgs.blockIndex = bb;
-        blockStructs(bb).simArgs.boundMean = bounds(:,1);
-        blockStructs(bb).simArgs.boundSTD = bounds(:,2);
     end
-else
-    blockStructs = specs;
+elseif nargin >= 1 && isstruct(dataTable)
+    % expects struct with fields:
+    %   numSubjects
+    %   blocks
+    blocks = nonanunique(dataTable.blocks);
+    numBlocks = length(blocks);
+    blockSpecs = repmat(options, dataTable.numSubjects, numBlocks);
+    for bb = 1:numBlocks
+        % Add block defaults
+        for ff = fieldnames(blockDefaults)'
+            [blockSpecs(:,bb).(ff{:})] = deal(blockDefaults(blocks(bb)).(ff{:}));
+        end
+    end
 end
 
-% Parse the arguments so we can estimate the table size
-blockArgs = repmat(blockDefaults,1,length(blockStructs));
-simArgs = repmat(simDefaults,1,length(blockStructs));
-numTrials = 0;
-for bb = 1:length(blockStructs)
-
-    % fprintf('Simulation block %d\n', bb)
-
-    % Get block arguments
-    if isfield(blockStructs(bb), 'blockArgs')
-        for ff = fieldnames(blockStructs(bb).blockArgs)'
-            blockArgs(bb).(ff{:}) = blockStructs(bb).blockArgs.(ff{:});
-        end
-    end
-
-    % Get simulation arguments
-    if isfield(blockStructs(bb), 'simArgs')
-        for ff = fieldnames(blockStructs(bb).simArgs)'
-            simArgs(bb).(ff{:}) = blockStructs(bb).simArgs.(ff{:});
-        end
-    end
-
-    % Check for blockIndex
-    if blockArgs(bb).blockIndex>=1 && blockArgs(bb).blockIndex<=6
-        switch blockArgs(bb).blockIndex
-            case 1
-                simArgs(bb).generativeMean = 0.05;
-                simArgs(bb).generativeSTD = 0.15;
-                blockArgs(bb).stepsPerBlock = 600;
-                blockArgs(bb).P2Psteps = 1;
-                blockArgs(bb).P2Pcoins = 0;
-                blockArgs(bb).coinsGainedPerCorrect = 1;
-                blockArgs(bb).coinsLostPerError = 0;
-                blockArgs(bb).stepsLostPerError = 0;
-            case 2
-                simArgs(bb).generativeMean = 0.05;
-                simArgs(bb).generativeSTD = 0.15;
-                blockArgs(bb).stepsPerBlock = 600;
-                blockArgs(bb).P2Psteps = 1;
-                blockArgs(bb).P2Pcoins = 0;
-                blockArgs(bb).coinsGainedPerCorrect = 1;
-                blockArgs(bb).coinsLostPerError = 4;
-                blockArgs(bb).stepsLostPerError = 0;
-            case 3
-                simArgs(bb).generativeMean = 0.05;
-                simArgs(bb).generativeSTD = 0.15;
-                blockArgs(bb).stepsPerBlock = 600;
-                blockArgs(bb).P2Psteps = 1;
-                blockArgs(bb).P2Pcoins = 0;
-                blockArgs(bb).coinsGainedPerCorrect = 1;
-                blockArgs(bb).coinsLostPerError = 0;
-                blockArgs(bb).stepsLostPerError = 30;
-            case 4
-                simArgs(bb).generativeMean = 0.15;
-                simArgs(bb).generativeSTD = 0.15;
-                blockArgs(bb).stepsPerBlock = 600;
-                blockArgs(bb).P2Psteps = 1;
-                blockArgs(bb).P2Pcoins = 0;
-                blockArgs(bb).coinsGainedPerCorrect = 1;
-                blockArgs(bb).coinsLostPerError = 0;
-                blockArgs(bb).stepsLostPerError = 0;
-            case 5
-                simArgs(bb).generativeMean = 0.15;
-                simArgs(bb).generativeSTD = 0.15;
-                blockArgs(bb).stepsPerBlock = 600;
-                blockArgs(bb).P2Psteps = 1;
-                blockArgs(bb).P2Pcoins = 0;
-                blockArgs(bb).coinsGainedPerCorrect = 1;
-                blockArgs(bb).coinsLostPerError = 4;
-                blockArgs(bb).stepsLostPerError = 0;
-            case 6
-                simArgs(bb).generativeMean = 0.15;
-                simArgs(bb).generativeSTD = 0.15;
-                blockArgs(bb).stepsPerBlock = 600;
-                blockArgs(bb).P2Psteps = 1;
-                blockArgs(bb).P2Pcoins = 0;
-                blockArgs(bb).coinsGainedPerCorrect = 1;
-                blockArgs(bb).coinsLostPerError = 0;
-                blockArgs(bb).stepsLostPerError = 30;
-        end
-    end
-
-
-    % Update estimate of numTrials
-    simArgs(bb).numTrials = blockArgs(bb).stepsPerBlock + 2;
-    numTrials = numTrials + blockArgs(bb).numSubjects .* simArgs(bb).numTrials;
-end
-
-% Set up the data table, steps celery
+% Set up the data table
 %   Note that we're using the same fields as from getDataTable, with the
 %   addition of "trueBound" -- bound is computed empirically, trueBound is,
-%   duh, the real one
-% Set up the data table -- preallocate for speed
-dataTable_ = getPigeon_blankDataTable(numTrials, 'trueBound', "double");
+%   duh, the real one used in the simulations
+dataTable_ = getPigeon_blankDataTable(sum([blockSpecs.numTrials]), 'trueBound', "double");
 tableIndex = 1;
+argNames = {'generativeMean', 'generativeSTD', 'numTrials', ...
+    'maxStepsPerTrial', 'boundMean', 'boundSTD', ...
+    'boundSlope', 'boundMax', 'NDTMin', ...
+    'NDTmax', 'lapseRate', 'bounds'};
+args = cell(1,length(argNames)*2);
+args(1:2:end) = argNames;
 
-% Now loop through the blocks and do the simulations
-for bb = 1:length(blockStructs)
-
-    % To convert struct to celery for args
-    argNames = fieldnames(simArgs(bb));
-    argVals = struct2cell(simArgs(bb));
-    args = cell(1,length(argNames)*2);
-    args(1:2:end) = argNames;
-
-    stepCounts = nan(simArgs(bb).numTrials,1);
-    coinCounts = nan(simArgs(bb).numTrials,1);
-    NDT = min(2, simArgs(bb).NDTmax);
-
-    % Do the simulation, per subject
-    for ss = 1:blockArgs(bb).numSubjects
+% Now loop through the specs and do the simulations
+for ss = 1:size(blockSpecs,1) % Per subject
+    for bb = 1:size(blockSpecs,2) % Per block
 
         % Make the arg list for the simulations
-        for vv = 1:length(argVals)
-            if length(argVals{vv}) == blockArgs(bb).numSubjects
-                args{vv*2} = argVals{vv}(ss);
-            else
-                args{vv*2} = argVals{vv}(1);
-            end
+        for aa = 1:length(argNames)
+            args{aa*2} = blockSpecs(ss,bb).(argNames{aa});
         end
 
         % Do the sim
-        [choices, rts, DV, bounds, ~] = getPigeon_simulatedData(args{:});
+        [choices, rts, ~, ~, ~, snrs, steps] = getPigeon_simulatedData(args{:});
 
         % Update the data Table
         % jig changed to match real data, where steps always include zero
         % start
         %         stepCounts(:) = cumsum(repmat(blockArgs(bb).P2Psteps,simArgs(bb).numTrials,1) + ...
         %             steps + blockArgs(bb).stepsLostPerError .* (choices==0));
-        stepCounts(:) = cumsum(rts + blockArgs(bb).stepsLostPerError .* (choices==0));
-        coinCounts(:) = cumsum(repmat(-blockArgs(bb).P2Pcoins,simArgs(bb).numTrials,1) - ...
-            blockArgs(bb).coinsLostPerError .* (choices==0) + ...
-            blockArgs(bb).coinsGainedPerCorrect .* (choices==1));
-        trialCount = find(stepCounts>=blockArgs(bb).stepsPerBlock,1);
+        stepCounts = cumsum(rts + blockSpecs(ss,bb).stepsLostPerError .* (choices==0));
+        coinCounts = cumsum(repmat(-blockSpecs(ss,bb).P2Pcoins,blockSpecs(ss,bb).numTrials,1) - ...
+            blockSpecs(ss,bb).coinsLostPerError .* (choices==0) + ...
+            blockSpecs(ss,bb).coinsGainedPerCorrect .* (choices==1));
+        trialCount = find(stepCounts>=blockSpecs(ss,bb).stepsPerBlock,1);
 
         % Add for final aborted trial
-        if stepCounts > blockArgs(bb).stepsPerBlock
+        if stepCounts > blockSpecs(ss,bb).stepsPerBlock
             choices(trialCount) = nan;
             coinCounts(trialCount) = coinCounts(trialCount-1);
         end
 
-        % Make the table
+        % Update the table
         inds = tableIndex:tableIndex+trialCount-1;
+        if isempty(inds)
+            disp(length(inds))
+        end
         if inds(end) > height(dataTable_)
             dataTable_ = cat(1, dataTable_, ...
                 getPigeon_blankDataTable(10000, 'trueBound', "double"));
         end
 
+        % Save stuff
         dataTable_.subjectIndex(inds) = ss;
-        dataTable_.blockIndex(inds) = bb;
+        dataTable_.blockIndex(inds) = blocks(bb);
         dataTable_.trialNumber(inds) = 1:trialCount;
         dataTable_.RT(inds) = rts(1:trialCount);
-        dataTable_.trueBound(inds) = bounds(1:trialCount);
         dataTable_.choice(inds) = choices(1:trialCount);
         dataTable_.correct(inds) = choices(1:trialCount);
         dataTable_.coinCount(inds) = coinCounts(1:trialCount);
+        dataTable_.snr(inds) = snrs(1:trialCount);
 
-        % Compute lower/upper/bound + ndt
-        rts = rts(1:trialCount);
-        DV  = DV(1:trialCount,:);
-
-        % Special case of one step
-        Lrt = rts == 1;
-        if any(Lrt)
-            dataTable_.bound(inds(Lrt)) = DV(Lrt,1)./2;
-            dataTable_.boundLo(inds(Lrt)) = 0;
-            dataTable_.boundHi(inds(Lrt)) = DV(Lrt,1);
-            dataTable_.DT(inds(Lrt)) = 1;
-            dataTable_.steps(inds(Lrt)) = num2cell(DV(Lrt,1));
-        end
-
-        % General case
-        for rr = 2:max(rts)
-            Lrt = rts == rr;
-            if any(Lrt)
-                r_ndt = min(NDT, rr-2);
-                dataTable_.bound(inds(Lrt)) = mean(DV(Lrt,rr-r_ndt-1+[0 1]),2);
-                dataTable_.boundLo(inds(Lrt)) = DV(Lrt,rr-r_ndt-1);
-                dataTable_.boundHi(inds(Lrt)) = DV(Lrt,rr-r_ndt);
-                dataTable_.DT(inds(Lrt)) = rr-r_ndt;
-                dataTable_.steps(inds(Lrt)) = mat2cell(DV(Lrt,1:rr), ones(sum(Lrt),1), rr);
-            end
-        end
+        % Get bound, etc in the standard way
+        [dataTable_.bound(inds), ...
+            dataTable_.DT(inds), ...
+            dataTable_.RT(inds)] = ...
+            getPigeon_bounds(steps(1:trialCount), choices(1:trialCount));
+        dataTable_.steps(inds) = steps(1:trialCount);
 
         % update index
         tableIndex = inds(end)+1;

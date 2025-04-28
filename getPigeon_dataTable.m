@@ -6,21 +6,20 @@ function [dataTable_] = getPigeon_dataTable(options)
 %   2. blockIndex
 %   3. trialNumber
 %   4. bound (pigeon position in OL)
-%   5. boundLo (bottom of range)
-%   6. boundHi (bottom of range)
-%   7. RT (response time, including ndt, in number of steps)
-%   8. DT (response time, not including ndt, in number of steps)
-%   9. choice (0/1)
-%   10. correct (correct=1,error=0)
-%   11. coinCount
-%   12. steps (cell)
+%   5. RT (response time, including ndt, in number of steps)
+%   6. DT (response time, not including ndt, in number of steps)
+%   7. choice (0/1)
+%   8. correct (correct=1,error=0)
+%   9. coinCount
+%   10. snr
+%   11. steps (cell)
 
 arguments
-    options.taskType = 'OL'    % 'OL', 'MX', or 'PD'
-    options.ndt = 1            % non-decision time
+    options.taskType = 'MX'    % 'OL', 'MX', or 'PD'
     options.dataDir = ...
-        fullfile('/Users', 'jigold', 'GoldWorks', 'Mirror_jigold', 'Manuscripts', '2023_Pigeon', 'Data')
+        fullfile('/Users', 'ishankalburge', 'Documents', 'penn', 'Pigeon', 'Data');
     options.blocks = 'all';
+    options.combineSNR = true; % default to 3 blocks MX/OL snrs
 end
 
 % Set up the data table
@@ -30,7 +29,7 @@ dataTable_ = getPigeon_blankDataTable(0);
 files = dir(fullfile(options.dataDir, ['Pigeon_' options.taskType], 'prolificcsvs', '*.csv'));
 for ff = 1:length(files)
 
-    disp(ff)
+    fprintf('% 1d: %s\n\n', ff, fullfile(files(ff).folder, files(ff).name))
 
     % Read data into Table
     tmpTable = readtable(fullfile(files(ff).folder, files(ff).name));
@@ -45,7 +44,7 @@ for ff = 1:length(files)
     if strcmp(options.taskType, 'OL') || strcmp(options.taskType, 'MX')
         tmpTable = tmpTable(Lgood, ...
             {'block_number', 'trial_number', 'pigeon_steps', 'choice', ...
-            'correct' 'steps_count', 'step_std_val', 'coins_count'});
+            'correct' 'steps_count', 'step_mean_val', 'step_std_val', 'coins_count'});
     else
         indices = find(Lgood);
         tmpTable = cat(2, ...
@@ -59,24 +58,18 @@ for ff = 1:length(files)
     tableToAppend.subjectIndex(1:end) = ff;
     tableToAppend.blockIndex(1:end) = tmpTable.block_number(1:end);
     tableToAppend.trialNumber(1:end) = tmpTable.trial_number(1:end);
-
+    tableToAppend.snr(1:end) = tmpTable.step_mean_val(1:end)./tmpTable.step_std_val(1:end);
+     
     % Loop through the trials to fill in the blanks
     for tt = 1:numTrials
 
         % Get steps
         tableToAppend.steps{tt} = str2num(tmpTable.pigeon_steps{tt});
 
-        % Get bounds, etc
-        if strcmp(options.taskType, 'OL') || strcmp(options.taskType, 'MX')
-            vals = getPigeon_bounds(tableToAppend.steps{tt}, options.ndt);
-            tableToAppend.RT(tt) = length(tableToAppend.steps{tt});
-            tableToAppend.bound(tt) = vals(1);
-            tableToAppend.boundLo(tt) = vals(2);
-            tableToAppend.boundHi(tt) = vals(3);
-            tableToAppend.DT(tt) = vals(4);
-        else
-            tableToAppend.bounds(tt) = tmpTable.predefined_bound(tt);
-            tableToAppend.rt(tt) = length(tableToAppend.steps(tt));
+        % Get bound, rt for PD task
+        if strcmp(options.taskType, 'PD')
+            tableToAppend.bound(tt) = tmpTable.predefined_bound(tt);
+            tableToAppend.RT(tt) = length(tableToAppend.steps(tt));
         end
 
         % Choice/outcome
@@ -90,6 +83,30 @@ for ff = 1:length(files)
         tableToAppend.coinCount(tt) = tmpTable.coins_count(tt);
     end
 
+    % Get NDT, bounds for on-line tasks
+    if strcmp(options.taskType, 'OL') || strcmp(options.taskType, 'MX')
+        [tableToAppend.bound(1:end), ...
+            tableToAppend.DT(1:end), ...
+            tableToAppend.RT(1:end)] = ...
+            getPigeon_bounds(tableToAppend.steps, tableToAppend.choice);
+    end
+
     % add the data
     dataTable_ = cat(1, dataTable_, tableToAppend);
+end
+
+
+% Possibly set to 3 blocks of mixed or blocked snr
+if all(unique(dataTable_.blockIndex)==(1:6)') && options.combineSNR
+
+    % check for block type 
+    if isscalar(nonanunique(abs(dataTable_.snr(dataTable_.blockIndex == 1))))
+        % blocked, change block number 4:6 to 1:3
+        for bb = 1:3
+            dataTable_.blockIndex(dataTable_.blockIndex==bb+3)=bb;
+        end
+    else
+        % mixed, remove blocks 4:6
+        dataTable_ = dataTable_(dataTable_.blockIndex<=3,:);
+    end
 end
