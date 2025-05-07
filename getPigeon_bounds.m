@@ -1,10 +1,10 @@
-function [bounds_, dts_, rts_, congruences] = getPigeon_bounds(steps, choices, maxNDTs)%, trueBound)
-% function [bounds_, dts_, rts_, congruences_, boundMinMax_] = getPigeon_bounds(steps, choices, maxNDTs, trueBound)
+function [bounds_, dts_, rts_, congruences] = getPigeon_bounds(steps, choices, options)%, trueBound)
+% function [bounds_, dts_, rts_, congruences_, boundMinMax_] = getPigeon_bounds(steps, choices, maxNDT, trueBound)
 %
 % Arguments:
 %   steps ... cell array of steps
 %   choices ... array of choices
-%   maxNDTs ... how many non-decision times to consider
+%   maxNDT ... max non-decision time to consider
 %
 % Returns:
 %   bounds_ ... array of bounds
@@ -13,23 +13,26 @@ function [bounds_, dts_, rts_, congruences] = getPigeon_bounds(steps, choices, m
 %   congruences_ ... fraction congruent choices (wrt pigeon position) for
 %                       each NDT considered
 
-% Check arg
-if nargin < 3 || isempty(maxNDTs)
-    maxNDTs = 5;
+% Check args
+arguments
+    steps
+    choices
+    options.maxNDT = 5;
+    options.snrs = [];
 end
 
 % Make matrix of bounds, defined as the midpoint between sequential steps,
 %   for different NDTs
 numTrials = size(steps,1);
-boundMatrix = zeros(numTrials,maxNDTs,2); % assume default zero bound (guess)
+boundMatrix = zeros(numTrials,options.maxNDT,2); % assume default zero bound (guess)
 rts_ = nan(numTrials,1);
 for ii = 1:numTrials
 
-    % Parse bound based on maxNDTs last steps
+    % Parse bound based on maxNDT last steps
     rts_(ii) = length(steps{ii});
 
     % Get final steps to parse bound
-    finalSteps = fliplr(steps{ii}(max(rts_(ii)-maxNDTs-1,1):end));
+    finalSteps = fliplr(steps{ii}(max(rts_(ii)-options.maxNDT-1,1):end));
 
     % Save final step sizes/positions
     if length(finalSteps) > 1
@@ -40,9 +43,9 @@ for ii = 1:numTrials
 end
 
 % Measure choice congruence
-congruences = nan(maxNDTs,1);
+congruences = nan(options.maxNDT,1);
 choices = choices*2-1;
-for ii = 1:maxNDTs-1
+for ii = 1:options.maxNDT-1
     Lc = boundMatrix(:,ii,2)~=0;
     if any(Lc)
         congruences(ii) = sum( ...
@@ -55,10 +58,37 @@ ndt = ndt*(ndt>0) + 1 * (ndt<=0);
 
 % Set bound per trial
 ndt_idx = ndt;
-bounds_ = boundMatrix(:,ndt_idx,2) - 0.5.*(boundMatrix(:,ndt_idx,1));
-Lbump = sign(boundMatrix(:,ndt_idx,1)) ~= sign(boundMatrix(:,ndt_idx,2)); 
-bounds_(Lbump) = boundMatrix(Lbump,ndt_idx+1,2) - 0.5.*(boundMatrix(Lbump,ndt_idx+1,1));
-bounds_(~isfinite(choices)) = nan;
+
+% jig TEST 5/6/25
+if ~isempty(options.snrs)
+    mus = options.snrs.*0.1;
+    bounds_ = zeros(numTrials,1);
+    for ii = 1:numTrials
+        ndti = ndt_idx;
+        if sign(boundMatrix(ii,ndt_idx,1)) ~= sign(boundMatrix(ii,ndt_idx,2))
+            ndti = ndt_idx+1;
+        end
+
+        if boundMatrix(ii,ndti,1) > 0 && boundMatrix(ii,ndti,2) > 0
+            bounds_(ii) = boundMatrix(ii,ndti+1,2) + ...
+                quadgk(@(x) x.*normpdf(x,mus(ii),0.1)./...
+                ((normcdf(boundMatrix(ii,ndti,1),mus(ii),0.1) - ...
+                normcdf(0,mus(ii),0.1))), 0, boundMatrix(ii,ndti,1));
+        elseif boundMatrix(ii,ndti,1) < 0 && boundMatrix(ii,ndti,2) < 0
+            bounds_(ii) = boundMatrix(ii,ndti+1,2) + ...
+                quadgk(@(x) x.*normpdf(x,mus(ii),0.1)./...
+                ((normcdf(0,mus(ii),0.1) - ...
+                normcdf(boundMatrix(ii,ndti,1),mus(ii),0.1))), boundMatrix(ii,ndti,1), 0);
+        end
+        disp([ii mus(ii) bounds_(ii) boundMatrix(ii,ndt_idx,2) - 0.5.*(boundMatrix(ii,ndt_idx,1))])
+    end
+else
+    bounds_ = boundMatrix(:,ndt_idx,2) - 0.5.*(boundMatrix(:,ndt_idx,1));
+    % Check for cases where we crossed in the wrong direction
+    Lbump = sign(boundMatrix(:,ndt_idx,1)) ~= sign(boundMatrix(:,ndt_idx,2));
+    bounds_(Lbump) = boundMatrix(Lbump,ndt_idx+1,2) - 0.5.*(boundMatrix(Lbump,ndt_idx+1,1));
+    bounds_(~isfinite(choices)) = nan;
+end
 
 % if nargin >= 4 && ~isempty(trueBound)
 %     cla reset; hold on;
