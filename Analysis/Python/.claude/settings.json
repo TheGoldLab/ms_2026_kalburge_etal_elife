@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/jigold/miniconda3 -name \"jupyter\" -type f 2>/dev/null | head -5)",
+      "Read(//Users/jigold/miniconda3/**)"
+    ],
+    "additionalDirectories": [
+      "/tmp",
+      "/private/tmp"
+    ]
+  }
+}

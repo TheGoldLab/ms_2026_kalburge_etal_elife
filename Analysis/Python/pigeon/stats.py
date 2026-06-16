@@ -5,7 +5,7 @@ Python translations of getPigeon_performanceSummary, getPigeon_boundSummary.
 Both functions apply ``get_good_trial_array`` internally, which enforces the
 standard quality filters:
 
-- ``DT ≥ 1``             — excludes trials too short to estimate a bound
+- ``DT ≥ 2``             — excludes trials too short to estimate a bound
 - ``trial_number ≥ 10``  — excludes early warm-up trials per block
 - ``wall_hit = False``   — excludes trials where the pigeon reached the screen
                             edge (|position| ≥ 0.75), which inflate RT/DT
