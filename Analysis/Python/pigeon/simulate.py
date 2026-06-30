@@ -24,6 +24,10 @@ ndt_min, ndt_max : int
     Non-decision time drawn uniformly from [ndt_min, ndt_max].
     NDT formula matches MATLAB: randi(hi-lo+1) - lo + 1,
     i.e. Python: rng.integers(1, hi-lo+2) + (1-lo).
+ndt_pmf : dict {int: float} or None
+    Custom discrete NDT distribution that overrides ndt_min/ndt_max/ndt_sigma.
+    Keys are NDT values; values are relative weights (need not sum to 1).
+    Example: {2: 1, 4: 1} gives 50 % NDT=2, 50 % NDT=4.
 
 Constants
 ---------
@@ -76,8 +80,13 @@ def simulate_trials(
     bound_max=0.75,
     ndt_min=1,
     ndt_max=3,
+    ndt_sigma=0.0,
+    ndt_center=2.0,
+    ndt_bound_slope=0.0,
     lapse_rate=0.0,
     bounds=None,
+    sensory_sigma=0.0,
+    ndt_pmf=None,
     rng=None,
     return_steps=True,
 ):
@@ -107,13 +116,48 @@ def simulate_trials(
     bound_max : float
         Screen-edge limit (task geometry: 0.75).
     ndt_min, ndt_max : int or array-like
-        Non-decision time range (steps). Drawn uniformly from [ndt_min, ndt_max].
-        If arrays, length must equal len(generative_mean) for per-SNR NDTs.
+        Non-decision time range (steps).  When ndt_sigma == 0 and
+        ndt_bound_slope == 0, drawn uniformly from [ndt_min, ndt_max] using
+        the MATLAB-compatible formula.  When ndt_sigma > 0 (and
+        ndt_bound_slope == 0), the support is NDT ∈ {ndt_min, …, ndt_max}
+        with Gaussian weights exp(-½ ((NDT-2)/ndt_sigma)²) centred at 2.
+        If ndt_min/ndt_max are arrays, length must equal len(generative_mean)
+        for per-SNR NDTs (ndt_sigma / ndt_bound_slope modes use element [0]).
+    ndt_sigma : float
+        SD of Gaussian noise added to the per-trial NDT mean.  When > 0 and
+        ndt_bound_slope == 0, the mean is fixed at 2 and the support is
+        [ndt_min, ndt_max].  When ndt_bound_slope != 0, it is the SD of
+        trial-to-trial variability around the bound-dependent mean.
+    ndt_center : float
+        Intercept of the NDT–bound relationship: NDT_mean = ndt_center +
+        ndt_bound_slope × |bound|.  Only used when ndt_bound_slope != 0.
+        Set ndt_center = 2 − ndt_bound_slope × ref_bound to anchor the mean
+        NDT to 2 at a reference bound level.  Default 2.0.
+    ndt_bound_slope : float
+        Linear coefficient of NDT vs per-trial |bound| (negative → shorter
+        NDT for larger, clearer decisions).  When != 0, activates the
+        bound-dependent NDT mode: per-trial NDT_mean = ndt_center +
+        ndt_bound_slope × |bound_per_trial|, then optionally jittered by
+        ndt_sigma.  NDT is clamped to [1, max_steps − ss − 1].  Requires
+        ndt_sigma for trial-to-trial spread around the mean.
     lapse_rate : float
         Fraction of trials assigned a random choice (ignores DV).
     bounds : array-like or None
         If given, per-trial bound is drawn randomly from this pool (overrides
         bound_mean / bound_std).
+    sensory_sigma : float
+        SD of zero-mean Gaussian perceptual noise added to the true pigeon
+        position at each step.  The subject decides to stop based on the
+        *perceived* position (true DV + noise), but the step sequences returned
+        contain the *true* DV — matching what was actually shown on screen and
+        what get_bounds uses to infer the bound.  When > 0 this can trigger
+        threshold crossings at true positions that have not yet reached the
+        bound, and vice versa.
+    ndt_pmf : dict {int: float} or None
+        Custom discrete NDT distribution.  Keys are NDT values, values are
+        relative weights (need not sum to 1).  When provided, overrides all
+        other NDT parameters (ndt_min, ndt_max, ndt_sigma, ndt_bound_slope).
+        Example: {2: 0.7, 4: 0.3} draws NDT=2 70% of the time and NDT=4 30%.
     rng : np.random.Generator or None
 
     Returns
@@ -124,7 +168,7 @@ def simulate_trials(
     bounds_out: (num_trials,) float array  — bound at crossing
     ndts      : (num_trials,) int array    — NDT per trial
     snrs      : (num_trials,) float array  — SNR per trial
-    steps     : list of num_trials arrays  — step sequence per trial
+    steps     : list of num_trials arrays  — step sequence per trial (TRUE DV)
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -140,21 +184,11 @@ def simulate_trials(
         i_means = np.zeros(num_trials, dtype=int)
         trial_means = np.full(num_trials, generative_mean[0])
 
-    # Draw NDTs matching MATLAB: randi(NDTMax-NDTMin+1) - NDTMin + 1
-    # This produces values in {2-NDTMin, ..., NDTMax-NDTMin+2-NDTMin} = {2-lo, ..., hi-2lo+2}
-    # For NDTMin=2, NDTMax=3 (default): ndts ∈ {0, 1}
-    # For NDTMin=1, NDTMax=3: ndts ∈ {1, 2, 3}
+    # NDTs are drawn after bound_per_trial is built (bound-dependent mode needs it).
+    # Stored here as a placeholder; filled below.
     ndt_min_arr = np.atleast_1d(np.asarray(ndt_min, dtype=int))
     ndt_max_arr = np.atleast_1d(np.asarray(ndt_max, dtype=int))
     ndts = np.empty(num_trials, dtype=int)
-    if len(ndt_min_arr) == 1 or len(ndt_min_arr) != n_means:
-        lo, hi = int(ndt_min_arr[0]), int(ndt_max_arr[0])
-        ndts[:] = rng.integers(1, hi - lo + 2, size=num_trials) + (1 - lo)
-    else:
-        for mm in range(n_means):
-            lm = i_means == mm
-            lo, hi = int(ndt_min_arr[mm]), int(ndt_max_arr[mm])
-            ndts[lm] = rng.integers(1, hi - lo + 2, size=int(lm.sum())) + (1 - lo)
 
     # Generate DV: starts at 0, each step ~ N(trial_mean, generative_std)
     noise = rng.normal(trial_means[:, None], generative_std,
@@ -186,6 +220,39 @@ def simulate_trials(
         bound_per_trial = (np.maximum(MIN_BOUND, rng.normal(bm, bs, size=num_trials))
                            if bs > 0 else np.full(num_trials, bm))
 
+    # Draw NDTs (now that bound_per_trial is available for bound-dependent mode)
+    if ndt_pmf is not None:
+        values  = np.array(sorted(ndt_pmf.keys()), dtype=int)
+        weights = np.array([ndt_pmf[v] for v in values], dtype=float)
+        weights /= weights.sum()
+        ndts[:] = rng.choice(values, size=num_trials, p=weights)
+    elif ndt_bound_slope != 0.0:
+        # Per-trial NDT mean scales linearly with |bound|:
+        #   NDT_mean = ndt_center + ndt_bound_slope * |bound|
+        # Negative ndt_bound_slope → shorter NDT for larger, clearer decisions.
+        ndt_means = ndt_center + ndt_bound_slope * bound_per_trial
+        ndt_means = np.maximum(ndt_means, 1.0)
+        raw = (rng.normal(ndt_means, ndt_sigma) if ndt_sigma > 0
+               else ndt_means)
+        ndts[:] = np.maximum(np.round(raw).astype(int), 1)
+    elif ndt_sigma > 0:
+        # Gaussian-weighted discrete distribution centred at NDT=2.
+        lo, hi = int(ndt_min_arr[0]), int(ndt_max_arr[0])
+        support  = np.arange(lo, hi + 1)
+        weights  = np.exp(-0.5 * ((support - 2.0) / ndt_sigma) ** 2)
+        weights /= weights.sum()
+        ndts[:] = rng.choice(support, size=num_trials, p=weights)
+    else:
+        # Original MATLAB-compatible uniform formula.
+        if len(ndt_min_arr) == 1 or len(ndt_min_arr) != n_means:
+            lo, hi = int(ndt_min_arr[0]), int(ndt_max_arr[0])
+            ndts[:] = rng.integers(1, hi - lo + 2, size=num_trials) + (1 - lo)
+        else:
+            for mm in range(n_means):
+                lm = i_means == mm
+                lo, hi = int(ndt_min_arr[mm]), int(ndt_max_arr[mm])
+                ndts[lm] = rng.integers(1, hi - lo + 2, size=int(lm.sum())) + (1 - lo)
+
     # Build slope vector for time-varying bound (covers columns 0..max_steps-1,
     # the only columns checked for crossings). Skipped when bound_slope == 0.
     if bound_slope != 0:
@@ -196,18 +263,27 @@ def simulate_trials(
         ])[:max_steps]
 
     # Find first bound crossings — fully vectorized, no Python step loop.
-    # crossed_at[i, ss] = True iff |DV[i, ss]| >= bound at step ss.
-    # Only checks columns 0..max_steps-1 (matching the original loop range).
+    # When sensory_sigma > 0, crossing detection and choice use the *perceived*
+    # DV (true DV + i.i.d. Gaussian noise); step sequences remain the true DV.
     choices_out = np.full(num_trials, np.nan)
     rts_out     = np.full(num_trials, max_steps, dtype=int)
     bounds_out  = np.full(num_trials, np.nan)
     snrs        = trial_means / generative_std
     abs_DV      = np.abs(DV)
 
-    if bound_slope != 0:
-        crossed_at = abs_DV[:, :max_steps] >= bound_per_trial[:, None] * slope_vec[None, :]
+    if sensory_sigma > 0:
+        perceptual_noise = rng.normal(0, sensory_sigma,
+                                      size=(num_trials, max_steps))
+        perceived_DV  = DV[:, :max_steps] + perceptual_noise
+        abs_perceived = np.abs(perceived_DV)
     else:
-        crossed_at = abs_DV[:, :max_steps] >= bound_per_trial[:, None]
+        perceived_DV  = DV[:, :max_steps]
+        abs_perceived = abs_DV[:, :max_steps]
+
+    if bound_slope != 0:
+        crossed_at = abs_perceived >= bound_per_trial[:, None] * slope_vec[None, :]
+    else:
+        crossed_at = abs_perceived >= bound_per_trial[:, None]
 
     any_crossed = crossed_at.any(axis=1)
     first_ss    = np.argmax(crossed_at, axis=1)  # meaningful only where any_crossed
@@ -217,8 +293,11 @@ def simulate_trials(
     if normal.any():
         rows    = np.where(normal)[0]
         ss_vals = first_ss[rows]
-        rts_out[rows]     = np.minimum(ss_vals + ndts[rows] + 1, max_steps)
-        choices_out[rows] = (DV[rows, ss_vals] > 0).astype(float)
+        # Clamp NDT so DT ≥ 1 (NDT ≥ 1) and RT ≤ max_steps (NDT ≤ max_steps-ss-1)
+        ndts[rows] = np.clip(ndts[rows], 1, max_steps - ss_vals - 1)
+        rts_out[rows]     = ss_vals + ndts[rows] + 1   # guaranteed ≤ max_steps
+        # Choice direction from PERCEIVED DV (what triggered the crossing)
+        choices_out[rows] = (perceived_DV[rows, ss_vals] > 0).astype(float)
         bounds_out[rows]  = (bound_per_trial[rows] * slope_vec[ss_vals]
                              if bound_slope != 0 else bound_per_trial[rows])
 
@@ -262,9 +341,14 @@ def get_simulated_data_table(
     bound_max=0.75,
     ndt_min=2,
     ndt_max=3,
+    ndt_sigma=0.0,
+    ndt_center=2.0,
+    ndt_bound_slope=0.0,
     lapse_rate=0.0,
     bound_type='given',
     bounds=None,
+    sensory_sigma=0.0,
+    ndt_pmf=None,
     correct_bias=BIAS_CORRECTION_FILE,
     rng=None,
 ):
@@ -312,6 +396,10 @@ def get_simulated_data_table(
         then assigns each trial the bound corresponding to its SNR level.
         This is equivalent to MATLAB's boundType='varBySNR'.
     bounds : array-like or None
+    sensory_sigma : float
+    ndt_pmf : dict {int: float} or None
+        Custom discrete NDT distribution forwarded to simulate_trials.
+        Overrides ndt_min, ndt_max, ndt_sigma, ndt_bound_slope when set.
     correct_bias : str or None
         Path to .mat bias-correction file; applied if the file exists.
     rng : np.random.Generator or None
@@ -335,8 +423,13 @@ def get_simulated_data_table(
         bound_max=bound_max,
         ndt_min=ndt_min,
         ndt_max=ndt_max,
+        ndt_sigma=ndt_sigma,
+        ndt_center=ndt_center,
+        ndt_bound_slope=ndt_bound_slope,
         lapse_rate=lapse_rate,
         bounds=bounds,
+        sensory_sigma=sensory_sigma,
+        ndt_pmf=ndt_pmf,
     )
 
     # ------------------------------------------------------------------
@@ -426,7 +519,8 @@ def get_simulated_data_table(
             sim_kw = {k: spec[k] for k in (
                 'generative_mean', 'generative_std', 'num_trials', 'max_steps',
                 'bound_mean', 'bound_std', 'bound_slope', 'bound_max',
-                'ndt_min', 'ndt_max', 'lapse_rate', 'bounds',
+                'ndt_min', 'ndt_max', 'ndt_sigma', 'ndt_center', 'ndt_bound_slope',
+                'lapse_rate', 'bounds', 'sensory_sigma', 'ndt_pmf',
             )}
 
             choices, rts, _DV, _b, _ndts, snrs_sim, steps_sim = simulate_trials(

@@ -1,6 +1,3 @@
-def main():
-    print("Hello from claude-test!")
-
-
 if __name__ == "__main__":
-    main()
+    print("Pigeon analysis package. Run notebooks in notebooks/ to reproduce figures.")
+    print("See README.md for setup instructions.")

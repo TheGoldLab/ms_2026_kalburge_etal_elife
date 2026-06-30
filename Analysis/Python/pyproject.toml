@@ -1,7 +1,7 @@
 [project]
-name = "claude-test"
+name = "pigeon-analysis"
 version = "0.1.0"
-description = "Add your description here"
+description = "Analysis code for the Pigeon decision-making task (Kalburge et al.)"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

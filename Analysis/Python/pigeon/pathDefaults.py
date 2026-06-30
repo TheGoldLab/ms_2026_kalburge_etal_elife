@@ -19,7 +19,7 @@ RAW_DATA_DIR = Path('/Users/jigold/GoldWorks/Mirror_jigold/Manuscripts/2023_Pige
 # ── Processed / derived data (stored with the project) ────────────────────────
 DATA_DIR = PROJECT_ROOT.parent.parent.parent / 'Data' / 'Processed' / 'Python'
 
-BIAS_CORRECTION_FILE = DATA_DIR / 'boundBiasCorrection.mat'   # bound-bias regression coefficients
+BIAS_CORRECTION_FILE = DATA_DIR / 'boundBiasCorrection.mat'   # bound-bias calibration (interpolation preferred; legacy linear-fit fallback)
 BOUND_SUMMARIES_FILE = DATA_DIR / 'boundSummaries_wCP.mat'    # CP-task bound summaries (MATLAB)
 RR_MATS_FILE         = DATA_DIR / 'RRMats.mat'                # CP reward-rate matrices
 RR_MATS_OL_FILE      = DATA_DIR / 'RRMats_OL.mat'             # OL reward-rate matrix
