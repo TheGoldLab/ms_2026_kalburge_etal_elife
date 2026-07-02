@@ -43,10 +43,12 @@ Kalburge I, Dallstream A, Josić K, Kilpatrick ZP, Ding L, Gold JI
 | `Figure03_boundSummary` | Figure 03 | Bound vs. DT: individual trials, z-scored curves, regression slopes |
 | `Figure03S01_congruenceByRT` | Figure 03S1 | Congruence by response time |
 | `Figure03S02_boundTest` | Figure 03S2 | Bound definition validation |
+| `Figure03S03_sequentialAnalysis` | Figure 03S3 | Sequential structure in bound estimates: regression-to-mean artifact demo, real-vs-simulated slope/variability comparison, residual sequential structure (OL blocks 1–3) |
 | `Figure04_RRvsBound` | Figure 04 | Reward rate vs. bound (OL) and within-block learning curves |
 | `Figure05_mixedVsBlockedSNR` | Figure 05 | Bound comparison: mixed vs. blocked SNR |
 | `Figure05S01_boundDiffByDT` | Figure 05S1 | Hi−Lo SNR bound difference by DT |
 | `Figure05S02_RRMapExploration` | Figure 05S2 | Reward-rate map exploration |
+| `Figure05S03_conditionalAccuracy` | Figure 05S3 | Conditional accuracy functions (MX task): drift-varies vs. bound-varies model predictions |
 | `Figure06_cpSummary` | Figure 06 | Change-point task: bound adaptation relative to optimal |
 | `Figure07_biasCorrection` | Figure 07 | Bias correction example (DT=2, lowest SNR) |
 | `Table_slopeAnalyses` | Table | Linear-regression slope statistics |
