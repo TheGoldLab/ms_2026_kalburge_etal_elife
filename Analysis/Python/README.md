@@ -21,7 +21,7 @@ Kalburge I, Dallstream A, Josić K, Kilpatrick ZP, Ding L, Gold JI
 
 3. **Run preprocessing notebooks** (must run before Figure notebooks):
    - `notebooks/Make_biasCorrection.ipynb` — generates `boundBiasCorrection.mat`
-   - `notebooks/Make_RRMatrix.ipynb` — generates `RRMats.mat` and `RRMats_OL.mat`
+   - `notebooks/Make_RRMatrix.ipynb` — generates `RRMats.mat`
 
 4. **Run Figure notebooks** to reproduce paper figures.
 
@@ -33,7 +33,7 @@ Kalburge I, Dallstream A, Josić K, Kilpatrick ZP, Ding L, Gold JI
 | Notebook | Output | Description |
 |---|---|---|
 | `Make_biasCorrection` | `boundBiasCorrection.mat` | Bias-correction calibration for the bound estimator |
-| `Make_RRMatrix` | `RRMats.mat`, `RRMats_OL.mat` | Expected reward-rate matrices over bound grids |
+| `Make_RRMatrix` | `RRMats.mat` | Expected reward-rate matrices over bound grids |
 
 ### Main figures
 | Notebook | Figure | Description |
@@ -44,6 +44,7 @@ Kalburge I, Dallstream A, Josić K, Kilpatrick ZP, Ding L, Gold JI
 | `Figure03S01_congruenceByRT` | Figure 03S1 | Congruence by response time |
 | `Figure03S02_boundTest` | Figure 03S2 | Bound definition validation |
 | `Figure03S03_sequentialAnalysis` | Figure 03S3 | Sequential structure in bound estimates: regression-to-mean artifact demo, real-vs-simulated slope/variability comparison, residual sequential structure (OL blocks 1–3) |
+| `Figure03S04_stepSizeBeforeBound` | Figure 03S4 | Step size immediately preceding the bound-crossing step: does it predict termination beyond a fixed bound? |
 | `Figure04_RRvsBound` | Figure 04 | Reward rate vs. bound (OL) and within-block learning curves |
 | `Figure05_mixedVsBlockedSNR` | Figure 05 | Bound comparison: mixed vs. blocked SNR |
 | `Figure05S01_boundDiffByDT` | Figure 05S1 | Hi−Lo SNR bound difference by DT |
