@@ -351,6 +351,7 @@ def get_simulated_data_table(
     ndt_pmf=None,
     correct_bias=BIAS_CORRECTION_FILE,
     rng=None,
+    var_bound_std=None,
 ):
     """
     Simulate a data table matching the format of get_data_table().
@@ -389,7 +390,8 @@ def get_simulated_data_table(
         'given'  – use the passed bound_mean / bound_std unchanged
         'fixed'  – median |bound| per subject/block; bound_std = 0
         'true'   – sample per-trial bounds from actual data; bound_std = 0
-        'var'    – median + std of |bound| per subject/block
+        'var'    – median + std of |bound| per subject/block; the std can be
+                   overridden for every subject/block via `var_bound_std`
         Note: in specs mode, per-SNR bounds can be achieved by passing
         generative_mean and bound_mean as matching-length lists (e.g.
         generative_mean=[lo, hi], bound_mean=[b_lo, b_hi]).  simulate_trials
@@ -403,6 +405,12 @@ def get_simulated_data_table(
     correct_bias : str or None
         Path to .mat bias-correction file; applied if the file exists.
     rng : np.random.Generator or None
+    var_bound_std : float or None
+        (data_table mode, bound_type='var' only) When set, overrides the
+        per-subject/block empirical std of |bound| with this single shared
+        value for every subject/block, while bound_mean stays each subject's
+        own empirical median |bound|. Used to fit the bound SD as a free
+        parameter shared across subjects. Ignored unless bound_type='var'.
 
     Returns
     -------
@@ -485,7 +493,8 @@ def get_simulated_data_table(
                     spec['bound_std'] = 0.0
                 elif bound_type == 'var':
                     spec['bound_mean'] = float(np.nanmedian(ab))
-                    spec['bound_std']  = float(np.nanstd(ab))
+                    spec['bound_std']  = (float(np.nanstd(ab)) if var_bound_std is None
+                                           else float(var_bound_std))
                 # 'given': leave base values unchanged
 
     elif specs is not None:

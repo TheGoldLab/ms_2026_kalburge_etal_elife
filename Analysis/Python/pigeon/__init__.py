@@ -17,6 +17,11 @@ simulate
     an absorbing bound, NDT, and optional lapse rate.  Can reproduce a full
     data-table in the same format as `get_data_table`.
 
+adaptation
+    Within-block adaptation time-constant (tau) fits, shared by
+    Figure04_RRvsBound (source of the tau insets in panels D-F) and any
+    notebook that gates trials on a subject's own adaptation time constant.
+
 Public API
 ----------
 get_data_table          Load real participant data as a DataFrame.
@@ -26,8 +31,10 @@ get_bound_summary       Mean |bound| per subject/block/SNR/DT bin.
 get_performance_summary Accuracy and DT stats per subject/block/SNR.
 simulate_trials         Core simulation engine (returns raw arrays).
 get_simulated_data_table Full simulated data table matching get_data_table format.
+get_adaptation_tau_fits Per-subject/block adaptation tau fits (Figure04 pipeline).
 """
 
 from .data import get_data_table, get_bounds, get_good_trial_array
 from .stats import get_bound_summary, get_performance_summary
 from .simulate import simulate_trials, get_simulated_data_table
+from .adaptation import get_adaptation_tau_fits
