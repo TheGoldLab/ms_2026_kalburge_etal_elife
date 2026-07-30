@@ -120,7 +120,7 @@ def simulate_trials(
         ndt_bound_slope == 0, drawn uniformly from [ndt_min, ndt_max] using
         the MATLAB-compatible formula.  When ndt_sigma > 0 (and
         ndt_bound_slope == 0), the support is NDT ∈ {ndt_min, …, ndt_max}
-        with Gaussian weights exp(-½ ((NDT-2)/ndt_sigma)²) centred at 2.
+        with Gaussian weights exp(-½ ((NDT-2)/ndt_sigma)²) centered at 2.
         If ndt_min/ndt_max are arrays, length must equal len(generative_mean)
         for per-SNR NDTs (ndt_sigma / ndt_bound_slope modes use element [0]).
     ndt_sigma : float
@@ -236,7 +236,7 @@ def simulate_trials(
                else ndt_means)
         ndts[:] = np.maximum(np.round(raw).astype(int), 1)
     elif ndt_sigma > 0:
-        # Gaussian-weighted discrete distribution centred at NDT=2.
+        # Gaussian-weighted discrete distribution centered at NDT=2.
         lo, hi = int(ndt_min_arr[0]), int(ndt_max_arr[0])
         support  = np.arange(lo, hi + 1)
         weights  = np.exp(-0.5 * ((support - 2.0) / ndt_sigma) ** 2)

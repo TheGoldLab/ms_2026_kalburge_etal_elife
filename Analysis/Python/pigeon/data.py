@@ -262,12 +262,12 @@ def get_bounds(steps_list, choices, max_ndt=5, min_rt=1, snr=None,
     ndt : int or None
         NDT lag to use for bound extraction. If an integer, all trials use
         this fixed lag (clipped to RT-2). If None, the lag is estimated per
-        SNR group as the one that maximises congruence.
+        SNR group as the one that maximizes congruence.
     peak_step_bound : bool
         If True (default), apply the peak-step bound correction: for trials
         where the pigeon is moving away from the choice side at the NDT
         crossing, replace the midpoint bound with steps[RT-2-ndt] — the
-        earlier, outermost of the two crossing steps (furthest from centre).
+        earlier, outermost of the two crossing steps (furthest from center).
         This avoids underestimating the bound when the pigeon has already
         turned around within the crossing window. Set to False to use the
         original midpoint definition.
@@ -318,7 +318,7 @@ def get_bounds(steps_list, choices, max_ndt=5, min_rt=1, snr=None,
     # Determine the best NDT lag per SNR level using congruence.
     # Congruence at lag k = fraction of trials where sign(bound_matrix[:, k])
     # matches the choice direction (+1 = right, -1 = left).  The lag that
-    # maximises congruence is the estimated NDT for that SNR level.
+    # maximizes congruence is the estimated NDT for that SNR level.
     ndts = np.full(n_trials, np.nan)
     bounds = np.full(n_trials, np.nan)
     congruences = np.full((max_ndt, n_snrs), np.nan)
@@ -349,7 +349,7 @@ def get_bounds(steps_list, choices, max_ndt=5, min_rt=1, snr=None,
     # Extract bound for each trial from its NDT lag.
     # With peak_step_bound=True: for trials where the pigeon is moving away from
     # the choice side at the NDT crossing, replace the midpoint with steps[RT-2-k]
-    # (the earlier, outermost step — furthest from centre when retreating).
+    # (the earlier, outermost step — furthest from center when retreating).
     for bi in np.where(np.isfinite(ndts))[0]:
         k   = int(ndts[bi])
         mid = bound_matrix[bi, k]
@@ -359,7 +359,7 @@ def get_bounds(steps_list, choices, max_ndt=5, min_rt=1, snr=None,
             sc = sc[np.isfinite(sc)] if sc is not None else np.array([])
             RT       = int(rts[bi])
             t_later  = RT - 1 - k   # later step (closer to response)
-            t_earlier = RT - 2 - k  # earlier step (furthest from centre when retreating)
+            t_earlier = RT - 2 - k  # earlier step (furthest from center when retreating)
             if 0 <= t_earlier < len(sc) and t_later < len(sc):
                 step_in = sc[t_later] - sc[t_earlier]
                 if step_in * np.sign(mid) < 0:  # backward motion at crossing
