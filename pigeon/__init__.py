@@ -1,0 +1,47 @@
+"""
+Pigeon — Python analysis package for the Pigeon task.
+
+Modules
+-------
+data
+    Load and pre-process trial data from raw CSV files.  Computes per-trial
+    bounds, decision times (DT), response times (RT), and applies optional
+    bias correction.  Also contains summary statistics over the processed
+    data table — per-subject/block/SNR accuracy, DT distributions, bound
+    statistics binned by DT, and the change-point-specific composed summary
+    (`get_bound_summaries_wcp`).
+
+simulation
+    Generative model of the task.  Simulates a random-walk accumulator with
+    an absorbing bound, NDT, and optional lapse rate.  Can reproduce a full
+    data-table in the same format as `get_data_table`.
+
+adaptation
+    Within-block adaptation time-constant (tau) fits, shared by
+    Figure04_RRvsBound (source of the tau insets in panels D-F) and any
+    notebook that gates trials on a subject's own adaptation time constant.
+
+plotting
+    Shared style helpers for the figure/table notebooks (FONT_RC,
+    add_panel_label, and condition/task label dicts). Imported directly
+    (`from pigeon.plotting import ...`), not re-exported below.
+
+Public API
+----------
+get_data_table          Load real participant data as a DataFrame.
+get_bounds              Infer per-trial bound and DT from step sequences.
+get_good_trial_array    Boolean mask for standard trial-quality filters.
+get_bound_summary       Mean |bound| per subject/block/SNR/DT bin.
+get_performance_summary Accuracy and DT stats per subject/block/SNR.
+get_bound_summaries_wcp Change-point-specific composed bound summary (Figure06/Make_RRMatrix pipeline).
+simulate_trials         Core simulation engine (returns raw arrays).
+get_simulated_data_table Full simulated data table matching get_data_table format.
+get_adaptation_tau_fits Per-subject/block adaptation tau fits (Figure04 pipeline).
+"""
+
+from .data import (
+    get_data_table, get_bounds, get_good_trial_array,
+    get_bound_summary, get_performance_summary, get_bound_summaries_wcp,
+)
+from .simulation import simulate_trials, get_simulated_data_table
+from .adaptation import get_adaptation_tau_fits

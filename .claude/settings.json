@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/jigold/miniconda3 -name \"jupyter\" -type f 2>/dev/null | head -5)",
+      "Read(//Users/jigold/miniconda3/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(tail -15 \"/private/tmp/claude-501/-Users-jigold-Library-CloudStorage-Box-Box-GoldLab-Projects-2025-Pigeon-Code-Analysis-Python/760ecbb6-ad57-4493-b4eb-3b5c924f6d8c/tasks/b4ddnf35l.output\" *)",
+      "Bash(rm \"/Users/jigold/Library/CloudStorage/Box-Box/GoldLab/Projects/2025_Pigeon/Code/Analysis/Python/notebooks/_SCRATCH_Make_RRMatrix_sanitycheck.ipynb\" *)",
+      "Bash(jupyter nbconvert --to script --stdout *)",
+      "Bash(jupyter nbconvert *)"
+    ],
+    "additionalDirectories": [
+      "/tmp",
+      "/private/tmp"
+    ]
+  }
+}
