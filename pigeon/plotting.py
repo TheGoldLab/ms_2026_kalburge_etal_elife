@@ -23,7 +23,22 @@ TASK_ROW_LABELS = {'OL': 'Blocked SNR', 'MX': 'Mixed SNR'}
 
 
 def add_panel_label(ax, label, dx=-0.15, dy=1.08):
-    """Add a bold, 14-pt Helvetica panel label (e.g. 'A') at the upper-left of an axes."""
+    """
+    Add a bold, 14-pt Helvetica panel label (e.g. 'A') at the upper-left of an axes.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes to label.
+    label : str
+        Label text, e.g. 'A'.
+    dx, dy : float
+        Position in axes-fraction coordinates (`ax.transAxes`: (0, 0) = lower-left,
+        (1, 1) = upper-right of the axes). Defaults place the label just outside
+        the upper-left corner; negative dx / dy > 1 are expected. See
+        Figure03_boundSummary.ipynb for an example of rescaling dx for a
+        narrower-than-usual panel.
+    """
     ax.text(dx, dy, label, transform=ax.transAxes,
             fontsize=14, fontweight='bold', fontfamily='Helvetica',
             ha='left', va='top')

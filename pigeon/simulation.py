@@ -68,6 +68,18 @@ BLOCK_DEFAULTS = {
     7: dict(steps_per_block=600, p2p_coins=0, coins_gained=1, coins_lost=1,  steps_lost=0),
 }
 
+# Same per-condition reward structure as BLOCK_DEFAULTS, but PD's step budget is
+# 800/block, not 600 (confirmed from the raw PD CSVs' tc_steps_max field, constant
+# across all subjects -- see get_data_table's task_type='PD' handling in data.py).
+BLOCK_DEFAULTS_PD = {
+    1: dict(steps_per_block=800, p2p_coins=0, coins_gained=1, coins_lost=0,  steps_lost=0),
+    2: dict(steps_per_block=800, p2p_coins=0, coins_gained=1, coins_lost=4,  steps_lost=0),
+    3: dict(steps_per_block=800, p2p_coins=0, coins_gained=1, coins_lost=0,  steps_lost=30),
+    4: dict(steps_per_block=800, p2p_coins=0, coins_gained=1, coins_lost=0,  steps_lost=0),
+    5: dict(steps_per_block=800, p2p_coins=0, coins_gained=1, coins_lost=4,  steps_lost=0),
+    6: dict(steps_per_block=800, p2p_coins=0, coins_gained=1, coins_lost=0,  steps_lost=30),
+}
+
 
 def simulate_trials(
     generative_mean=0.05,
@@ -352,6 +364,7 @@ def get_simulated_data_table(
     correct_bias=BIAS_CORRECTION_FILE,
     rng=None,
     var_bound_std=None,
+    block_defaults=BLOCK_DEFAULTS,
 ):
     """
     Simulate a data table matching the format of get_data_table().
@@ -411,6 +424,11 @@ def get_simulated_data_table(
         value for every subject/block, while bound_mean stays each subject's
         own empirical median |bound|. Used to fit the bound SD as a free
         parameter shared across subjects. Ignored unless bound_type='var'.
+    block_defaults : dict
+        Per-block step budget and reward structure, keyed by block number
+        (see BLOCK_DEFAULTS). Default BLOCK_DEFAULTS (600 steps/block, the
+        OL/MX/MXSC task). Pass BLOCK_DEFAULTS_PD for the PD task (800
+        steps/block, same per-condition reward structure otherwise).
 
     Returns
     -------
@@ -456,7 +474,7 @@ def get_simulated_data_table(
             ls_sub = data_table['subject_index'] == subj
             for bi, block in enumerate(blocks):
                 spec = block_specs[si][bi]
-                spec.update(BLOCK_DEFAULTS.get(int(block), BLOCK_DEFAULTS[1]))
+                spec.update(block_defaults.get(int(block), block_defaults[1]))
 
                 ls_blk   = lg & ls_sub & (data_table['block_index'] == block)
                 snr_vals = np.unique(abs_snr[ls_blk & np.isfinite(abs_snr)])
@@ -470,12 +488,12 @@ def get_simulated_data_table(
                             and cong.ndim == 2 and cong.shape[1] >= len(snr_vals)):
                         ndt_min_v = np.empty(len(snr_vals), dtype=int)
                         ndt_max_v = np.empty(len(snr_vals), dtype=int)
-                        for ri in range(len(snr_vals)):
-                            order = np.argsort(cong[:, ri])
+                        for ni in range(len(snr_vals)):
+                            order = np.argsort(cong[:, ni])
                             top2  = order[-2:]
                             # +1 converts 0-indexed Python lag positions to MATLAB's 1-indexed NDT
-                            ndt_min_v[ri] = int(top2.min()) + 1
-                            ndt_max_v[ri] = int(top2.max()) + 1
+                            ndt_min_v[ni] = int(top2.min()) + 1
+                            ndt_max_v[ni] = int(top2.max()) + 1
                         spec['ndt_min'] = ndt_min_v
                         spec['ndt_max'] = ndt_max_v
                 else:
@@ -508,7 +526,7 @@ def get_simulated_data_table(
             row = []
             for block in blocks:
                 spec = dict(base)
-                spec.update(BLOCK_DEFAULTS.get(int(block), BLOCK_DEFAULTS[1]))
+                spec.update(block_defaults.get(int(block), block_defaults[1]))
                 row.append(spec)
             block_specs.append(row)
 

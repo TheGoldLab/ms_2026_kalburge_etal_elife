@@ -1,0 +1,74 @@
+# CP-time computation method per MXSC (change-point task) subject.
+#
+# During the task, each subject's change-point step (when the low<->high SNR
+# switch occurs in the LowHigh/HighLow blocks) was set from that subject's own
+# RTs on the preceding fixed low-/high-SNR (non-changepoint) block. Two
+# task-code versions were used across data collection:
+#   mean   -> round(mean(RT)) of the fixed block's RTs
+#              (matches matlab/getPigeon_dataTable_MXSC.m)
+#   median -> median(RT) of the fixed block's RTs, unrounded
+#              (matches calculate_median() in task/MXSC/PigeonTask.js)
+#
+# Read by pigeon.data.get_data_table(task_type='MXSC') to apply the correct
+# formula per subject. One row per subject: <method><tab><csv filename>.
+
+mean	CP25-S002_PigeonTask_2025-02-18_17h54.36.397.csv
+mean	CP25-S006_PigeonTask_2025-02-24_20h40.37.408.csv
+mean	CP25-S007_PigeonTask_2025-02-19_10h50.13.637.csv
+mean	CP25-S009_PigeonTask_2025-02-24_19h43.37.451.csv
+mean	CP25-S010_PigeonTask_2025-02-19_11h48.28.433.csv
+mean	CP25-S012_PigeonTask_2025-02-18_17h18.55.282.csv
+mean	CP25-S020_PigeonTask_2025-02-19_11h45.32.741.csv
+mean	CP25-S023_PigeonTask_2025-02-24_21h20.32.968.csv
+mean	CP25-S028_PigeonTask_2025-02-25_14h48.09.227.csv
+mean	CP25-S033_PigeonTask_2025-02-19_10h49.53.003.csv
+mean	CP25-S034_PigeonTask_2025-02-25_04h24.47.727.csv
+mean	CP25-S040_PigeonTask_2025-02-24_20h42.34.120.csv
+mean	CP25-S041_PigeonTask_2025-02-18_12h08.52.663.csv
+mean	CP25-S042_PigeonTask_2025-02-18_12h19.13.907.csv
+mean	CP25-S043_PigeonTask_2025-02-19_09h47.11.697.csv
+mean	CP25-S044_PigeonTask_2025-02-24_17h42.01.268.csv
+mean	CP25-S045_PigeonTask_2025-02-24_18h52.29.328.csv
+mean	CP25-S046_PigeonTask_2025-02-24_19h49.46.493.csv
+mean	CP25-S047_PigeonTask_2025-02-25_01h39.45.670.csv
+mean	CP25-S060_PigeonTask_2025-02-19_11h53.02.940.csv
+median	CP25-S001_PigeonTask_2025-03-21_12h24.23.977.csv
+median	CP25-S003_PigeonTask_2025-03-21_12h57.38.965.csv
+median	CP25-S004_PigeonTask_2025-03-23_21h15.14.332.csv
+median	CP25-S005_PigeonTask_2025-03-23_20h43.17.071.csv
+median	CP25-S008_PigeonTask_2025-03-21_11h24.13.098.csv
+median	CP25-S011_PigeonTask_2025-03-24_00h54.00.853.csv
+median	CP25-S013_PigeonTask_2025-03-24_00h47.17.689.csv
+median	CP25-S014_PigeonTask_2025-03-24_02h52.21.402.csv
+median	CP25-S015_PigeonTask_2025-03-21_11h27.18.572.csv
+median	CP25-S016_PigeonTask_2025-03-21_11h27.41.827.csv
+median	CP25-S017_PigeonTask_2025-03-21_12h41.33.604.csv
+median	CP25-S018_PigeonTask_2025-03-24_02h52.25.448.csv
+median	CP25-S019_PigeonTask_2025-03-21_13h28.42.502.csv
+median	CP25-S021_PigeonTask_2025-03-24_01h47.29.900.csv
+median	CP25-S022_PigeonTask_2025-03-24_00h55.32.599.csv
+median	CP25-S024_PigeonTask_2025-03-23_21h55.30.502.csv
+median	CP25-S025_PigeonTask_2025-03-24_01h47.26.422.csv
+median	CP25-S026_PigeonTask_2025-03-24_01h23.39.974.csv
+median	CP25-S027_PigeonTask_2025-03-24_11h54.39.784.csv
+median	CP25-S029_PigeonTask_2025-03-24_00h55.08.971.csv
+median	CP25-S030_PigeonTask_2025-03-21_12h23.50.277.csv
+median	CP25-S031_PigeonTask_2025-03-21_13h24.41.634.csv
+median	CP25-S032_PigeonTask_2025-03-21_11h27.48.743.csv
+median	CP25-S035_PigeonTask_2025-03-23_19h44.44.215.csv
+median	CP25-S036_PigeonTask_2025-03-21_13h02.06.465.csv
+median	CP25-S037_PigeonTask_2025-03-23_17h54.30.081.csv
+median	CP25-S038_PigeonTask_2025-03-21_11h25.55.356.csv
+median	CP25-S039_PigeonTask_2025-03-21_11h25.51.742.csv
+median	CP25-S048_PigeonTask_2025-03-21_02h33.14.583.csv
+median	CP25-S049_PigeonTask_2025-03-21_11h24.32.248.csv
+median	CP25-S050_PigeonTask_2025-03-21_11h25.49.743.csv
+median	CP25-S051_PigeonTask_2025-03-21_11h32.32.706.csv
+median	CP25-S052_PigeonTask_2025-03-21_11h45.24.335.csv
+median	CP25-S053_PigeonTask_2025-03-21_12h26.17.699.csv
+median	CP25-S054_PigeonTask_2025-03-21_13h25.44.084.csv
+median	CP25-S055_PigeonTask_2025-03-23_19h44.52.385.csv
+median	CP25-S056_PigeonTask_2025-03-24_01h29.49.129.csv
+median	CP25-S057_PigeonTask_2025-03-24_01h42.59.188.csv
+median	CP25-S058_PigeonTask_2025-03-24_01h56.45.985.csv
+median	CP25-S059_PigeonTask_2025-03-23_19h48.30.776.csv

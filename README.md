@@ -96,8 +96,10 @@ into one flat folder of CSVs per task type, no nested subfolders:
 | `Figure03S02_stepSizeBeforeBound` | Figure 03S2 | Step size before the bound-crossing step: does it predict termination beyond a fixed bound? |
 | `Figure03S03_boundTest` | Figure 03S3 | Bound definition validation via fixed-bound simulations (NDT variability, sensory noise) |
 | `Figure03S04_sequentialAnalysis` | Figure 03S4 | Sequential structure in bound estimates: regression-to-mean artifact demo, real-vs-simulated slope/variability comparison, residual sequential structure (OL blocks 1–3) |
-| `Figure03S05_conditionalAccuracy` | Figure 03S5 | Conditional accuracy functions (MX task): drift-varies vs. bound-varies model predictions |
+| `Figure03S05_sequentialAnalysisPD` | Figure 03S5 | Sequential structure in PD bound choices: regression-to-mean demo, real-vs-shuffle-null slope/autocorrelation, SD histograms (PD blocks 1–3) — PD-task analog of Figure 03S4 |
+| `Figure03S06_conditionalAccuracy` | Figure 03S6 | Conditional accuracy functions (MX task): drift-varies vs. bound-varies model predictions |
 | `Figure04_RRvsBound` | Figure 04 | Reward rate vs. bound (OL) and within-block learning curves |
+| `Figure04S01_RRvsBoundPD` | Figure 04S1 | Reward rate vs. bound (PD) and within-block learning curves — PD-task analog of Figure 04 |
 | `Figure05_mixedVsBlockedSNR` | Figure 05 | Bound comparison: mixed vs. blocked SNR |
 | `Figure05S01_boundDiffByDT` | Figure 05S1 | Hi−Lo SNR bound difference by DT |
 | `Figure05S02_RRMapExploration` | Figure 05S2 | Reward-rate map exploration |

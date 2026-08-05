@@ -59,9 +59,34 @@ import pandas as pd
 import scipy.io
 
 
-from .pathDefaults import RAW_DATA_DIR, BIAS_CORRECTION_FILE
+from .pathDefaults import RAW_DATA_DIR, BIAS_CORRECTION_FILE, MXSC_CP_METHOD_FILE
 
 WALL = 0.75  # screen-edge limit; trials where any step position reaches |WALL| are flagged wall_hit = True
+
+
+def _load_mxsc_cp_methods(path=MXSC_CP_METHOD_FILE):
+    """Read the per-subject CP-time method manifest for the MXSC task.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the manifest (``<method><tab><csv filename>`` per line,
+        ``#``-prefixed comment lines and blank lines ignored).
+
+    Returns
+    -------
+    dict[str, str]
+        Maps CSV basename -> 'mean' or 'median'.
+    """
+    methods = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            method, fname = line.split("\t")
+            methods[fname] = method
+    return methods
 
 def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
                    combine_snr=True, correct_bias=BIAS_CORRECTION_FILE,
@@ -81,6 +106,12 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
         computed from blocks 1/2 (pre-change) and 4/5 (post-change).
         The 'CP' (change-point) task is not yet implemented in Python;
         use the MATLAB pipeline to generate pre-computed summaries.
+        'PD' (predefined bound): the subject chooses the bound before the
+        trial starts, so there's no step-position bound estimation, no NDT,
+        and no bias correction (correct_bias is ignored for 'PD' -- see
+        below). bound is `predefined_bound` signed by choice direction
+        (right = +), and DT = RT (every step is deliberation time; no NDT
+        to subtract).
     data_dir : str
         Path to the data directory
     blocks : str or list
@@ -88,7 +119,9 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
     combine_snr : bool
         If True, combine 6 blocks into 3 (blocked/mixed SNR logic)
     correct_bias : str or None
-        Path to .mat bias correction file, or None to skip
+        Path to .mat bias correction file, or None to skip. Ignored for
+        task_type='PD' (see task_type above): its bound has no measurement
+        bias to correct.
     max_ndt : int
         Max NDT lag to consider when building the bound matrix (see get_bounds).
     peak_step_bound : bool
@@ -100,7 +133,7 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
     pd.DataFrame with columns:
         subject_index, block_index, trial_number, bound, abs_bound,
         RT, DT, change_point, choice, correct, coin_count, snr,
-        steps, congruence
+        steps, congruence, rt_cutoff, rt_below_cutoff, wall_hit
     """
     # 'MX' membership covers 'MX' and 'MXSC' (online mixed-SNR column layout,
     # snr computation, and bound extraction); 'SC' membership covers 'MXSC'
@@ -118,32 +151,45 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
     csv_pattern = os.path.join(data_dir, task_type, "*.csv")
     files = sorted(glob.glob(csv_pattern))
 
+    # 'mean' vs 'median' subjects ran different task-code versions that
+    # derived the CP step differently -- see _load_mxsc_cp_methods and the
+    # is_sc block below.
+    cp_methods = _load_mxsc_cp_methods() if is_sc else {}
+
     all_tables = []
 
     for subject_index, fpath in enumerate(files, start=1):
         raw = pd.read_csv(fpath, encoding="utf-8-sig")
 
-        good = raw["trial_number"].notna()
+        lg = raw["trial_number"].notna()
         if isinstance(blocks, list):
-            good = good & raw["block_number"].isin(blocks)
+            lg = lg & raw["block_number"].isin(blocks)
 
         if task_type == "PD":
             # PD CSVs interleave trial-metadata rows (trial_number present) with
             # pigeon-data rows (trial_number absent). Access next_rows from the
             # raw DataFrame before filtering so the i+1 index is always valid.
-            orig_idx = raw.index[good].tolist()
+            # step_mean_val/step_std_val (for SNR) live on the metadata row
+            # alongside predefined_bound/correct, not on the data row.
+            orig_idx = raw.index[lg].tolist()
             orig_idx = [i for i in orig_idx if i + 1 < len(raw)]  # drop if no following row
             trial_rows = raw.loc[orig_idx].reset_index(drop=True)
             next_rows  = raw.loc[[i + 1 for i in orig_idx]].reset_index(drop=True)
             tmp = pd.concat([
-                trial_rows[["block_number", "trial_number", "predefined_bound", "correct"]],
+                trial_rows[["block_number", "trial_number", "predefined_bound", "correct",
+                            "step_mean_val", "step_std_val"]],
                 next_rows[["pigeon_steps", "choice", "coins_count"]],
             ], axis=1)
         else:
-            tmp = raw[good].reset_index(drop=True)
+            tmp = raw[lg].reset_index(drop=True)
             if is_ol_or_mx:
                 cols = ["block_number", "trial_number", "pigeon_steps", "choice",
                         "correct", "steps_count", "step_mean_val", "step_std_val", "coins_count"]
+                # switch_time is only present in MXSC data collected with the
+                # task-code version that records the changepoint step directly
+                # (see the is_sc block below); older files predate this column.
+                if is_sc and "switch_time" in tmp.columns:
+                    cols.append("switch_time")
                 tmp = tmp[cols].copy()
 
         n_trials = len(tmp)
@@ -158,7 +204,12 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
             "change_point": np.zeros(n_trials),
             "choice": np.full(n_trials, np.nan),
             "correct": np.full(n_trials, np.nan),
-            "coin_count": tmp["coins_count"].to_numpy(dtype=float),
+            # PD's coins_count column occasionally holds a block-end bonus
+            # message ("No bonus" / "Bonus!") instead of a running total --
+            # a PsychoPy logging quirk that overwrites the last trial of each
+            # block. coerce=NaN rather than crashing; coin_count isn't used by
+            # any bound/DT analysis.
+            "coin_count": pd.to_numeric(tmp["coins_count"], errors="coerce").to_numpy(dtype=float),
             "snr": (tmp["step_mean_val"] / tmp["step_std_val"]).to_numpy(dtype=float),
             "steps": [None] * n_trials,
             "congruence": [None] * n_trials,
@@ -185,8 +236,16 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
                 rows["correct"][tt] = float(tmp["correct"].iloc[tt])
 
             if task_type == "PD":
-                rows["bound"][tt] = float(tmp["predefined_bound"].iloc[tt])
                 rows["RT"][tt] = len(steps)
+                # The bound is chosen by the subject before the trial starts
+                # (hence "predefined") -- there's no midpoint estimation from
+                # step positions, so sign it directly by choice direction
+                # (right=+, matching the sign convention get_bounds derives
+                # from step position elsewhere: positive = right). Leave NaN
+                # if choice wasn't parsed (unsigned bound would be meaningless).
+                if np.isfinite(rows["choice"][tt]):
+                    sign = 1.0 if rows["choice"][tt] == 1.0 else -1.0
+                    rows["bound"][tt] = sign * float(tmp["predefined_bound"].iloc[tt])
 
         # Compute bounds, DT, RT, congruences for online tasks
         if is_ol_or_mx:
@@ -203,25 +262,72 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
             rows["RT"]         = rts
             rows["congruence"] = [congruence] * n_trials
             rows["rt_cutoff"]  = rt_cutoffs
+        elif task_type == "PD":
+            # No NDT to subtract -- the subject already knows the bound, so
+            # every step taken is deliberation time.
+            rows["DT"] = rows["RT"].copy()
 
         rows["abs_bound"] = np.abs(rows["bound"])
 
         # Change-point tasks (e.g. 'MXSC'): blocks 1/2 are the pre-change
         # low/high-SNR blocks, blocks 4/5 the post-change low-to-high (LH) and
-        # high-to-low (HL) blocks. The change point for the post-change block
-        # is set to the mean RT of the corresponding pre-change block.
+        # high-to-low (HL) blocks.
         if is_sc:
             block_idx = rows["block_index"]
-            rt = rows["RT"]
-            change_point = np.zeros(n_trials)
-            l_block  = block_idx == 1
-            h_block  = block_idx == 2
             lh_block = block_idx == 4
             hl_block = block_idx == 5
-            if l_block.any() and lh_block.any():
-                change_point[lh_block] = round(np.nanmean(rt[l_block]))
-            if h_block.any() and hl_block.any():
-                change_point[hl_block] = round(np.nanmean(rt[h_block]))
+            change_point = np.zeros(n_trials)
+
+            if "switch_time" in tmp.columns:
+                # Current task code: the changepoint step is recorded
+                # directly, per trial, in switch_time -- read it rather than
+                # re-deriving it from RTs (see task/MXSC/PigeonTask.js's
+                # otr_code_update "Begin Routine"). Only lh_block/hl_block
+                # trials have a real value; leave everything else at 0 (no
+                # changepoint). A NaN switch_time on an lh/hl trial would
+                # mean the task failed to record it -- surfaced, not silently
+                # zeroed, since that should never happen with this task-code
+                # version.
+                st = pd.to_numeric(tmp["switch_time"], errors="coerce").to_numpy(dtype=float)
+                change_point = np.where(lh_block | hl_block, st, 0.0)
+            else:
+                # Older data predates the switch_time column: fall back to
+                # recomputing the changepoint from RTs, using whichever
+                # formula that subject's task-code version actually used
+                # online (see _load_mxsc_cp_methods): 'mean' ->
+                # round(mean(RT)) (matches matlab/getPigeon_dataTable_MXSC.m);
+                # 'median' -> unrounded median(RT) (matches the pre-fix
+                # calculate_median() in task/MXSC/PigeonTask.js).
+                fname = os.path.basename(fpath)
+                if fname not in cp_methods:
+                    raise KeyError(
+                        f"{fname!r} has no entry in {MXSC_CP_METHOD_FILE} -- "
+                        "add it (mean or median) before computing change_point."
+                    )
+                cp_method = cp_methods[fname]
+                cp_func = (lambda x: round(np.nanmean(x))) if cp_method == "mean" \
+                    else np.nanmedian
+
+                rt = rows["RT"]
+                l_block = block_idx == 1
+                h_block = block_idx == 2
+                # 'median' subjects with an even-length fixed block get a
+                # half-integer CP (average of the two middle RTs). That
+                # task-code version never rounded this and triggered the
+                # switch with strict equality against an integer step
+                # counter (steps_in_trial === switch_time), so a
+                # half-integer switch_time could never match -- the SNR
+                # switch never actually fired online for that block. NaN it
+                # out here (rather than rounding to a step that was never
+                # really reached) so downstream code treats the whole block
+                # as no-change data and excludes it from CP-specific analyses.
+                if l_block.any() and lh_block.any():
+                    cp_val = cp_func(rt[l_block])
+                    change_point[lh_block] = cp_val if float(cp_val) % 1 == 0 else np.nan
+                if h_block.any() and hl_block.any():
+                    cp_val = cp_func(rt[h_block])
+                    change_point[hl_block] = cp_val if float(cp_val) % 1 == 0 else np.nan
+
             rows["change_point"] = change_point
 
         all_tables.append(pd.DataFrame(rows))
@@ -254,8 +360,11 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
             # mixed: drop blocks 4-6
             data_table = data_table[data_table["block_index"] <= 3].reset_index(drop=True)
 
-    # Apply bias corrections
-    if correct_bias and os.path.exists(correct_bias):
+    # Apply bias corrections. Never for PD: its bound is chosen by the subject
+    # (not estimated from step positions), so there's no measurement bias to
+    # correct -- the calibration files are specific to the midpoint estimator
+    # used by the other task types and would corrupt PD's exact bounds.
+    if correct_bias and task_type != "PD" and os.path.exists(correct_bias):
         data_table = apply_bias_corrections(data_table, correct_bias)
 
     return data_table
@@ -458,23 +567,23 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
     # With peak_step_bound=True: for trials where the pigeon is moving away from
     # the choice side at the NDT crossing, replace the midpoint with steps[RT-2-k]
     # (the earlier, outermost step — furthest from centre when retreating).
-    for bi in np.where(np.isfinite(ndts))[0]:
-        k   = int(ndts[bi])
-        mid = bound_matrix[bi, k]
+    for tt in np.where(np.isfinite(ndts))[0]:
+        k   = int(ndts[tt])
+        mid = bound_matrix[tt, k]
 
         if peak_step_bound and mid != 0:
-            sc = steps_list[bi]
+            sc = steps_list[tt]
             sc = sc[np.isfinite(sc)] if sc is not None else np.array([])
-            RT       = int(rts[bi])
+            RT       = int(rts[tt])
             t_later  = RT - 1 - k   # later step (closer to response)
             t_earlier = RT - 2 - k  # earlier step (furthest from centre when retreating)
             if 0 <= t_earlier < len(sc) and t_later < len(sc):
                 step_in = sc[t_later] - sc[t_earlier]
                 if step_in * np.sign(mid) < 0:  # backward motion at crossing
-                    bounds[bi] = sc[t_earlier]
+                    bounds[tt] = sc[t_earlier]
                     continue
 
-        bounds[bi] = mid
+        bounds[tt] = mid
 
     # Remove bounds from very short trials
     bounds[rts < min_rt] = np.nan
@@ -568,20 +677,20 @@ def get_bounds_from_dv(choices, rts, DV, max_ndt=5, rt_cutoff_threshold=0.65,
 
     # ── Extract bounds with peak-step correction ──────────────────────────────
     bounds = np.full(n_trials, np.nan)
-    for bi in np.where(np.isfinite(ndts))[0]:
-        k   = int(ndts[bi])
-        mid = bound_matrix[bi, k]
+    for tt in np.where(np.isfinite(ndts))[0]:
+        k   = int(ndts[tt])
+        mid = bound_matrix[tt, k]
 
         if peak_step_bound and mid != 0:
-            RT        = int(rts[bi])
+            RT        = int(rts[tt])
             t_later   = RT - 1 - k
             t_earlier = RT - 2 - k
             if 0 <= t_earlier < DV.shape[1] and t_later < DV.shape[1]:
-                step_in = DV[bi, t_later] - DV[bi, t_earlier]
+                step_in = DV[tt, t_later] - DV[tt, t_earlier]
                 if step_in * np.sign(mid) < 0:
-                    bounds[bi] = DV[bi, t_earlier]
+                    bounds[tt] = DV[tt, t_earlier]
                     continue
-        bounds[bi] = mid
+        bounds[tt] = mid
 
     # ── DTs ──────────────────────────────────────────────────────────────────
     dts = np.maximum(0, rts - ndts - 1)
@@ -658,6 +767,7 @@ def apply_bias_corrections(data_table, bias_file):
 
     Legacy linear approach
     ----------------------
+    Translated from getPigeon_biasCorrections.m.
     ``corrected = max(0.005, a + b * |measured|)`` per (DT bin, SNR bin), where
     [a, b] = ``boundBiasCorrection[dd, :, mm]``.  Less accurate at small bounds.
 
@@ -704,9 +814,9 @@ def apply_bias_corrections(data_table, bias_file):
     n_snr_bins = len(edges) + 1
 
     snrs = np.abs(data_table["snr"].to_numpy())
-    snr_finite = np.isfinite(snrs)
+    lsnr_finite = np.isfinite(snrs)
     snr_bin = np.digitize(snrs, edges)  # bin i: edges[i-1] <= snr < edges[i]
-    snr_masks = np.column_stack([snr_finite & (snr_bin == mm) for mm in range(n_snr_bins)])
+    snr_masks = np.column_stack([lsnr_finite & (snr_bin == mm) for mm in range(n_snr_bins)])
 
     bounds = data_table["bound"].to_numpy(dtype=float).copy()
 
@@ -736,12 +846,12 @@ def apply_bias_corrections(data_table, bias_file):
 
             if use_interp:
                 x = bound_summary[:, dd, mm]  # measured bound at each calibration point
-                valid = np.isfinite(x)
-                if valid.sum() < 2:
+                lvalid = np.isfinite(x)
+                if lvalid.sum() < 2:
                     continue
                 # Sort by x to guarantee a monotone interpolation grid.
-                order = np.argsort(x[valid])
-                xv, yv = x[valid][order], sim_bounds[valid][order]
+                order = np.argsort(x[lvalid])
+                xv, yv = x[lvalid][order], sim_bounds[lvalid][order]
                 corrected = np.maximum(0.005, _interp_with_extrapolation(abs_b, xv, yv))
             else:
                 corrected = np.maximum(
@@ -957,19 +1067,19 @@ def get_bound_summary(data_table, correct_only=False, blocks="all",
         # ddof=1 to match MATLAB's std(), which normalizes by N-1, not N.
         return [np.nanmean(vals), np.nanstd(vals, ddof=1), mask.sum()]
 
-    for ss, subj in enumerate(subject_indices):
+    for si, subj in enumerate(subject_indices):
         l_subject = l_good & (subject_arr == subj)
 
-        for bb, blk in enumerate(block_indices):
+        for bi, blk in enumerate(block_indices):
             l_sb = l_subject & (block_arr == blk)
 
-            for nn in range(num_snrs):
-                l_snr = l_sb & l_snrs[:, nn]
+            for ni in range(num_snrs):
+                l_snr = l_sb & l_snrs[:, ni]
 
                 if is_numeric_max_rt:
-                    for rr, rt_bin in enumerate(rt_bins):
+                    for ri, rt_bin in enumerate(rt_bins):
                         l_rt = l_snr & (dt_arr == rt_bin)
-                        bound_summary_[ss, bb, nn, rr, :] = _summarize(l_rt)
+                        bound_summary_[si, bi, ni, ri, :] = _summarize(l_rt)
 
                 elif max_rt == "medsplit":
                     if l_snr.any():
@@ -977,17 +1087,48 @@ def get_bound_summary(data_table, correct_only=False, blocks="all",
                         l_rts = [l_snr & (rt_arr <= med_rt), l_snr & (rt_arr > med_rt)]
                     else:
                         l_rts = [np.zeros_like(l_snr), np.zeros_like(l_snr)]
-                    for rr in range(2):
-                        bound_summary_[ss, bb, nn, rr, :] = _summarize(l_rts[rr])
+                    for ri in range(2):
+                        bound_summary_[si, bi, ni, ri, :] = _summarize(l_rts[ri])
 
                 else:  # 'all'
-                    bound_summary_[ss, bb, nn, 0, :] = _summarize(l_snr)
+                    bound_summary_[si, bi, ni, 0, :] = _summarize(l_snr)
 
     return bound_summary_
 
 
 @dataclass
 class BoundSummariesWCPOptions:
+    """
+    Options for get_bound_summaries_wcp, mirroring the MATLAB getBoundSummarieswCP
+    `arguments` block (renamed to snake_case). Only `min_dt` is currently read by
+    get_bound_summaries_wcp; the rest are accepted for parity with the MATLAB
+    options struct but have no effect yet.
+
+    Parameters
+    ----------
+    min_n : int
+        Minimum number of trials for a subject/condition to be included.
+    min_dt : float
+        Minimum DT (decision time, steps); applied as `DT >= min_dt`, matching
+        get_good_trial_array's standard quality filter. The only field
+        get_bound_summaries_wcp currently reads.
+    max_dt : int
+        Maximum DT (decision time, steps) to include.
+    num_sims : int
+        Number of simulated repetitions per condition.
+    block : int
+        Reference block index for the options struct's own default condition.
+    show_rr : bool
+        Whether to include reward-rate output.
+    num_rr_reps : int
+        Number of simulated repetitions used for reward-rate estimates.
+    scale_coins : bool
+        Whether to scale coin counts before reward-rate calculations.
+    quartile : int
+        Which quartile (1 to 4) of a distribution to use where applicable.
+    dt_cutoff : float
+        DT (decision time, steps) cutoff used for late-decision comparisons.
+    """
     min_n: int = 1
     min_dt: float = 2
     max_dt: int = 50
@@ -1022,7 +1163,8 @@ def get_bound_summaries_wcp(data_table_mxsc: pd.DataFrame, options: Any = None) 
         snake_case here): min_n, min_dt, max_dt, num_sims, block, show_rr,
         num_rr_reps, scale_coins, quartile, dt_cutoff. Only min_dt is
         currently read by this function; the rest are accepted for parity
-        with the MATLAB options struct.
+        with the MATLAB options struct. min_dt is applied as `DT >= min_dt`,
+        matching get_good_trial_array's standard quality filter.
 
     Returns
     -------
@@ -1057,7 +1199,9 @@ def get_bound_summaries_wcp(data_table_mxsc: pd.DataFrame, options: Any = None) 
         # Collect data
         cond_block = cond_dict[task_types[tt]]
         lb  = data_table_mxsc["block_index"] == cond_block
-        ldt = data_table_mxsc["DT"] > opts.min_dt  # Remove short DTs that are difficult to estimate bounds
+        # Standard DT >= min_dt quality filter (matches get_good_trial_array),
+        # removing short DTs that are difficult to estimate bounds from.
+        ldt = data_table_mxsc["DT"] >= opts.min_dt
         cond_table = data_table_mxsc.loc[lb & ldt].reset_index(drop=True)
 
         fixed_block = cond_dict[task_types[tt + 2]]

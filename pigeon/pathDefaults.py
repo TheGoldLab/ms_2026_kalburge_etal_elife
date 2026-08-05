@@ -31,6 +31,13 @@ if not RAW_DATA_DIR.exists():
         f"Run scripts/unpack_data.sh to unpack data/pigeon_raw_human.tar.gz there first."
     )
 
+# Per-subject CP-time computation method for the MXSC (change-point) task --
+# two task-code versions were used across data collection ('mean' subjects'
+# change-point step was round(mean(RT)) of their fixed-block RTs, 'median'
+# subjects' was the unrounded median). See the file header and
+# get_data_table's is_sc branch for how this is applied.
+MXSC_CP_METHOD_FILE = PROJECT_ROOT / 'data' / 'mxsc_cp_method.txt'
+
 # ── Processed / derived data (stored with the project) ────────────────────────
 DATA_DIR = PROJECT_ROOT / 'data' / 'processed'
 

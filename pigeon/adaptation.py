@@ -42,14 +42,14 @@ def _build_window_matrix(t_vals, trial_nums, half_win, min_win):
     """
     n_bins = len(trial_nums)
     W = np.zeros((n_bins, len(t_vals)))
-    valid = np.zeros(n_bins, dtype=bool)
+    lvalid = np.zeros(n_bins, dtype=bool)
     for ti, t in enumerate(trial_nums):
         mask = (t_vals >= t - half_win) & (t_vals <= t + half_win)
         cnt = mask.sum()
         if cnt >= min_win:
             W[ti, mask] = 1.0 / cnt
-            valid[ti] = True
-    return W, valid
+            lvalid[ti] = True
+    return W, lvalid
 
 
 def _exp_decay(t, A, tau, C):
@@ -81,11 +81,11 @@ def fit_exp_tau(trial_nums, z_vals, tau_max, min_valid=8):
         no resolvable decay within the fit window (slow drift, not a fast
         settle) -- these tau values describe a lower bound, not a measurement.
     """
-    valid = np.isfinite(z_vals)
-    if valid.sum() < min_valid:
+    lvalid = np.isfinite(z_vals)
+    if lvalid.sum() < min_valid:
         return np.nan, False
-    t = trial_nums[valid].astype(float)
-    y = z_vals[valid]
+    t = trial_nums[lvalid].astype(float)
+    y = z_vals[lvalid]
     A0 = float(y[0] - np.nanmedian(y[-5:]))
     C0 = float(np.nanmedian(y[-5:]))
     try:
@@ -164,16 +164,16 @@ def compute_per_subject_curves_with_nulls(data_table, max_trial, blocks,
             z = (sd['abs_bound'].values - mu) / sigma
             t_vals = sd['trial_number'].values
 
-            W, valid = _build_window_matrix(t_vals, trial_nums, half_win, min_win)
+            W, lvalid = _build_window_matrix(t_vals, trial_nums, half_win, min_win)
 
             curve = W @ z
-            curve[~valid] = np.nan
+            curve[~lvalid] = np.nan
             real_curves[si, :, bi] = curve
 
             z_tiled = np.broadcast_to(z, (n_perm, len(z))).copy()
             z_shuf = rng.permuted(z_tiled, axis=1)
             perm = z_shuf @ W.T
-            perm[:, ~valid] = np.nan
+            perm[:, ~lvalid] = np.nan
             perm_curves[:, si, :, bi] = perm
 
     return trial_nums, real_curves, perm_curves, subjects
@@ -198,14 +198,14 @@ def per_subject_significance(real_curves, perm_curves, alpha=0.05):
     pvals : (n_subjects, n_blocks) array
     sig   : (n_subjects, n_blocks) bool array
     """
-    has_data = np.any(np.isfinite(real_curves), axis=1)
+    lhas_data = np.any(np.isfinite(real_curves), axis=1)
     obs_stat = np.nansum(real_curves ** 2, axis=1)
     perm_stat = np.nansum(perm_curves ** 2, axis=2)
     counts = np.sum(perm_stat >= obs_stat[None, :, :], axis=0)
     pvals = (1 + counts) / (1 + perm_stat.shape[0])
-    pvals = np.where(has_data, pvals, np.nan)
-    sig = pvals < alpha
-    return pvals, sig
+    pvals = np.where(lhas_data, pvals, np.nan)
+    lsig = pvals < alpha
+    return pvals, lsig
 
 
 def group_null_band(perm_curves, alpha=0.05):
@@ -265,7 +265,7 @@ def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
     n_subjects = len(subjects)
     n_blocks = len(blocks)
     pvals = np.full((n_subjects, n_blocks), np.nan)
-    sig = np.zeros((n_subjects, n_blocks), dtype=bool)
+    lsig = np.zeros((n_subjects, n_blocks), dtype=bool)
 
     lg_by_block = {block: get_good_trial_array(data_table, block_index=block) for block in blocks}
 
@@ -284,9 +284,9 @@ def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
             except ValueError:
                 continue
             pvals[si, bi] = p
-            sig[si, bi] = p < alpha
+            lsig[si, bi] = p < alpha
 
-    return pvals, sig
+    return pvals, lsig
 
 
 def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
@@ -326,7 +326,14 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
       subjects    : list of subject indices (row order of all per-subject arrays)
       trial_nums  : (max_trial,) int array
       real_curves : (n_subjects, max_trial, n_blocks) smoothed z-scored |bound| curves
-      sig_tau     : (n_subjects, n_blocks) bool -- tau-fit eligibility
+      sig_tau     : (n_subjects, n_blocks) bool -- tau-fit eligibility. Block 0's
+                    within-block test already implies curve data exists (NaN
+                    p-value -> not significant); blocks 1+ additionally require
+                    curve data explicitly, since between_block_significance uses
+                    a separate, looser trial-count filter that can mark a subject
+                    "significant" without them having enough local trial density
+                    for compute_per_subject_curves_with_nulls to produce a
+                    finite curve point anywhere in the block.
       taus        : (n_subjects, n_blocks) float -- fitted tau, NaN if ineligible/failed
       censored    : (n_subjects, n_blocks) bool -- True if fit hit max_trial (not a
                     real measurement, excluded from "good" fits)
@@ -344,21 +351,26 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
     _, sig_between = between_block_significance(
         data_table, blocks, alpha=alpha, min_trials=between_min_trials)
 
+    # lhas_curve: does this subject/block have at least one finite curve point to
+    # fit at all? Block 0's sig_within is already implicitly gated by this (see
+    # per_subject_significance), but sig_between is computed independently with
+    # its own, looser trial-count filter and needs the same gate applied here.
+    lhas_curve = np.any(np.isfinite(real_curves), axis=1)
     sig_tau = sig_within.copy()
-    sig_tau[:, 1:] = sig_between[:, 1:]
+    sig_tau[:, 1:] = sig_between[:, 1:] & lhas_curve[:, 1:]
 
     taus = np.full((len(subjects), len(blocks)), np.nan)
-    censored = np.zeros((len(subjects), len(blocks)), dtype=bool)
+    lcensored = np.zeros((len(subjects), len(blocks)), dtype=bool)
     for bi in range(len(blocks)):
         for si in range(len(subjects)):
             if sig_tau[si, bi]:
                 tau, cens = fit_exp_tau(trial_nums, real_curves[si, :, bi], tau_max=float(max_trial))
                 taus[si, bi] = tau
-                censored[si, bi] = cens
+                lcensored[si, bi] = cens
 
-    good = np.isfinite(taus) & ~censored
+    lgood = np.isfinite(taus) & ~lcensored
     good_tau = pd.DataFrame(
-        np.where(good, taus, np.nan), index=subjects, columns=blocks)
+        np.where(lgood, taus, np.nan), index=subjects, columns=blocks)
 
     return dict(subjects=subjects, trial_nums=trial_nums, real_curves=real_curves,
-                sig_tau=sig_tau, taus=taus, censored=censored, good_tau=good_tau)
+                sig_tau=sig_tau, taus=taus, censored=lcensored, good_tau=good_tau)
