@@ -45,14 +45,30 @@ Usage notes
   ``BLOCK_DEFAULTS['steps_per_block'] = 600``.
 - ``get_simulated_data_table`` is designed for fitting/plotting simulations
   that need the same DataFrame format as ``get_data_table``.
+
+Change-point (MXSC) simulation
+------------------------------
+``simulate_cp_trials`` switches the drift from one SNR to another mid-trial
+at the task's change-point step (same indexing as task/MXSC/PigeonTask.js),
+optionally with a different bound after the switch.
+``get_simulated_cp_data_table`` builds a whole simulated cohort matched to
+the real MXSC data (each subject's trial counts, change points, NDT, and
+fixed-block bounds) under a stated bound policy -- 'none' (keep the
+starting SNR's bound: no strategy change) or 'instant' (switch to the new
+SNR's bound at the change point) -- and runs it through the same bound
+inference and bias correction as ``get_data_table``. Its purpose is to give
+every change-point analysis a simulated "no adaptation" baseline and a
+positive control on identical processing.
 """
 
 import os
 import numpy as np
 import pandas as pd
+import scipy.io
 
-from .data import WALL, get_bounds, apply_bias_corrections
-from .pathDefaults import BIAS_CORRECTION_FILE
+from .data import (WALL, get_bounds, apply_bias_corrections, get_good_trial_array,
+                   get_cp_generative_params, check_calibration_snrs)
+from .pathDefaults import BIAS_CORRECTION_FILE, BIAS_CORRECTION_CP_FILE
 
 
 MIN_BOUND = 0.03  # minimum allowed bound (prevents degenerate zero-bound trials)
@@ -614,4 +630,197 @@ def get_simulated_data_table(
     if correct_bias and os.path.exists(correct_bias):
         sim_table = apply_bias_corrections(sim_table, correct_bias)
 
+    return sim_table
+
+
+def simulate_cp_trials(pre_mean, post_mean, generative_std, cp_step, num_trials,
+                       bound_pre, bound_post=None, bound_std=0.0, ndt=1,
+                       max_steps=50, rng=None):
+    """Simulate change-point (MXSC) trials: the drift switches SNR mid-trial.
+
+    Each trial's direction (sign of the drift) is drawn 50/50 and kept across
+    the switch, as in the fixed task code. The accumulator stops when |DV|
+    first reaches the bound in force at that position; NDT steps follow.
+
+    Parameters
+    ----------
+    pre_mean, post_mean : float
+        Unsigned per-step generative means before and after the change point.
+    generative_std : float
+        Per-step noise SD (same before and after).
+    cp_step : int or None
+        Change-point step (the trial's switch_time). The task switches SNR
+        just before its cp_step-th movement, so movements cp_step, cp_step+1,
+        ... use post_mean. None or 0 means no switch (a fixed-SNR block).
+    num_trials : int
+        Number of trials.
+    bound_pre : float
+        Mean bound for positions reached before the switch.
+    bound_post : float or None
+        Mean bound for positions reached after the switch. None (default)
+        keeps bound_pre, i.e. no adaptation to the change point.
+    bound_std : float
+        Trial-to-trial SD of the bound. One N(0, 1) draw per trial scales both
+        bound_pre and bound_post, so a cautious trial is cautious throughout.
+    ndt : int
+        Non-decision steps after the crossing (the lag get_bounds estimates).
+    max_steps : int
+        Maximum positions per trial (task: STEPS_MAX_PER_TRIAL = 50).
+    rng : np.random.Generator or None
+
+    Returns
+    -------
+    dict
+        choice (1 = right, 0 = left, NaN = no crossing), correct (1/0, NaN
+        with choice), RT (positions logged, = len(steps)), steps (list of
+        position arrays starting at 0, the format of pigeon_steps), snr
+        (signed starting SNR), bound (bound in force at the crossing).
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    if bound_post is None:
+        bound_post = bound_pre
+    cp = int(cp_step) if cp_step else 0
+
+    sign = rng.choice([-1.0, 1.0], size=num_trials)
+    # Noise column m is movement m+1; movements >= cp (columns >= cp-1) run at post_mean.
+    cols = np.arange(max_steps)
+    no_switch = np.zeros(max_steps, dtype=bool)
+    move_mean = np.where((cols >= cp - 1) if cp else no_switch, post_mean, pre_mean)
+    noise = rng.normal(0.0, generative_std, size=(num_trials, max_steps)) + sign[:, None] * move_mean
+    DV = np.concatenate([np.zeros((num_trials, 1)), np.cumsum(noise, axis=1)], axis=1)
+
+    # DV column j is the position after j movements, so positions j >= cp were
+    # reached under the new SNR and are compared against bound_post.
+    z = rng.standard_normal(num_trials) if bound_std > 0 else np.zeros(num_trials)
+    pos_bound = np.where((cols >= cp) if cp else no_switch, bound_post, bound_pre)
+    bound = np.maximum(MIN_BOUND, pos_bound[None, :] + bound_std * z[:, None])
+    crossed = np.abs(DV[:, :max_steps]) >= bound
+    crossed[:, 0] = False  # start position; unreachable anyway since bound >= MIN_BOUND > 0
+
+    any_crossed = crossed.any(axis=1)
+    first_ss = np.argmax(crossed, axis=1)
+    rows = np.flatnonzero(any_crossed)
+    ss = first_ss[rows]
+
+    choice = np.full(num_trials, np.nan)
+    rts = np.full(num_trials, max_steps, dtype=int)
+    bound_out = np.full(num_trials, np.nan)
+    # Same NDT clamp and RT convention as simulate_trials: RT = crossing + NDT + 1 <= max_steps.
+    rts[rows] = ss + np.clip(ndt, 1, max_steps - ss - 1) + 1
+    choice[rows] = (DV[rows, ss] > 0).astype(float)
+    bound_out[rows] = bound[rows, ss]
+    correct = np.where(np.isfinite(choice), (choice == (sign > 0)).astype(float), np.nan)
+
+    return {
+        "choice": choice,
+        "correct": correct,
+        "RT": rts,
+        "steps": [DV[tt, :rts[tt]] for tt in range(num_trials)],
+        "snr": sign * pre_mean / generative_std,
+        "bound": bound_out,
+    }
+
+
+def get_simulated_cp_data_table(data_table, bound_std=0.0, adapt="none", max_steps=50,
+                                correct_bias=BIAS_CORRECTION_CP_FILE, rng=None):
+    """Simulate an MXSC cohort matched to real data, under a stated bound policy.
+
+    For each subject with all four canonical blocks (1 Low, 2 High, 3 LowHigh,
+    4 HighLow), simulates the same number of trials per block at the data's
+    own generative means (get_cp_generative_params), using the subject's own
+    change points and NDT. The subject's bound at each SNR is their median
+    |bound| in the matching fixed block. The simulated steps then go through
+    the same bound inference (get_bounds) and bias correction as
+    get_data_table, so any analysis can be run on real and simulated tables
+    alike.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Real MXSC table from get_data_table (bias-corrected), the source of
+        each subject's trial counts, change points, NDT, and fixed-block bounds.
+    bound_std : float
+        Trial-to-trial SD of the bound (see simulate_cp_trials).
+    adapt : {'none', 'instant'}
+        Bound policy in the change-point blocks. 'none': keep the starting
+        SNR's bound all trial (no strategy change). 'instant': switch to the
+        new SNR's fixed-block bound at the change point.
+    max_steps : int
+        Maximum positions per trial.
+    correct_bias : str, Path, or None
+        CP bias-correction file, checked against the data's SNRs and applied
+        as in get_data_table. None skips correction.
+    rng : np.random.Generator or None
+
+    Returns
+    -------
+    pd.DataFrame
+        Same core columns as get_data_table: subject_index, block_index,
+        trial_number, bound, abs_bound, RT, DT, choice, correct, snr,
+        step_std, change_point, steps, rt_cutoff, rt_below_cutoff, wall_hit.
+    """
+    if adapt not in ("none", "instant"):
+        raise ValueError(f"adapt must be 'none' or 'instant', got {adapt!r}")
+    if rng is None:
+        rng = np.random.default_rng()
+
+    gen = get_cp_generative_params(data_table)
+    g_std = gen["low"][1]
+    lg = get_good_trial_array(data_table) & (data_table["correct"] >= 0)
+
+    dfs = []
+    for subj, sub in data_table.groupby("subject_index"):
+        if set(sub["block_index"].dropna().astype(int)) < {1, 2, 3, 4}:
+            continue  # dropouts: no CP blocks to compare
+        lsub = lg.loc[sub.index]
+        b_low = np.nanmedian(sub.loc[lsub & (sub["block_index"] == 1), "bound"].abs())
+        b_high = np.nanmedian(sub.loc[lsub & (sub["block_index"] == 2), "bound"].abs())
+        if not (np.isfinite(b_low) and np.isfinite(b_high)):
+            continue
+        # NDT = RT - DT - 1 (get_bounds' DT convention); one lag per subject.
+        ndt = int((sub["RT"] - sub["DT"] - 1).dropna().mode().iloc[0])
+
+        # block: (pre mean, post mean, pre bound, post bound under each policy)
+        designs = {
+            1: (gen["low"][0], gen["low"][0], b_low, b_low),
+            2: (gen["high"][0], gen["high"][0], b_high, b_high),
+            3: (gen["low"][0], gen["high"][0], b_low, b_high if adapt == "instant" else b_low),
+            4: (gen["high"][0], gen["low"][0], b_high, b_low if adapt == "instant" else b_high),
+        }
+        parts = []
+        for block, (m_pre, m_post, b_pre, b_post) in designs.items():
+            blk = sub[sub["block_index"] == block]
+            cp = blk["change_point"].dropna().unique() if block in (3, 4) else [0]
+            if len(cp) != 1 or not np.isfinite(cp[0]):
+                break  # no usable change point for this subject
+            sim = simulate_cp_trials(m_pre, m_post, g_std, int(cp[0]), len(blk), b_pre, b_post,
+                                     bound_std=bound_std, ndt=ndt, max_steps=max_steps, rng=rng)
+            parts.append(pd.DataFrame({
+                "subject_index": subj, "block_index": block,
+                "trial_number": np.arange(1, len(blk) + 1),
+                "choice": sim["choice"], "correct": sim["correct"], "snr": sim["snr"],
+                "step_std": g_std, "change_point": float(cp[0]), "steps": sim["steps"],
+            }))
+        else:
+            sub_sim = pd.concat(parts, ignore_index=True)
+            # Same get_bounds call as get_data_table's (one call per subject over all
+            # blocks, NDT estimated from the lowest-SNR trials).
+            bounds, dts, rts, _, rt_cutoffs = get_bounds(
+                list(sub_sim["steps"]), sub_sim["choice"].to_numpy(),
+                snr=np.abs(sub_sim["snr"].to_numpy()), block_ids=sub_sim["block_index"].to_numpy(),
+                ndt=None, max_ndt=5, peak_step_bound=True,
+            )
+            sub_sim["bound"], sub_sim["DT"], sub_sim["RT"], sub_sim["rt_cutoff"] = bounds, dts, rts, rt_cutoffs
+            dfs.append(sub_sim)
+
+    sim_table = pd.concat(dfs, ignore_index=True)
+    sim_table["abs_bound"] = np.abs(sim_table["bound"])
+    sim_table["rt_below_cutoff"] = sim_table["RT"] < sim_table["rt_cutoff"]
+    sim_table["wall_hit"] = sim_table["steps"].apply(
+        lambda s: len(s) > 0 and bool(np.any(np.abs(s) >= WALL - 1e-9)))
+    if correct_bias and os.path.exists(correct_bias):
+        calib = scipy.io.loadmat(correct_bias, squeeze_me=True)
+        check_calibration_snrs(calib["snrs"], sim_table, source=correct_bias)
+        sim_table = apply_bias_corrections(sim_table, correct_bias)
     return sim_table
