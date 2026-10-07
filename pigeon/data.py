@@ -32,6 +32,12 @@ Main pipeline
        )
        bound_summaries = get_bound_summaries_wcp(data_table_mxsc)
 
+   CP calibration files must match the data's task design:
+   ``get_cp_generative_params`` reads the generative step mean/SD from the
+   data, ``get_data_table`` checks the CP bias-correction file's SNRs
+   against it, and ``load_cp_rr_mats`` checks RRMats.mat's ``g_means`` /
+   ``g_std`` / CP steps before returning it.
+
    Called directly (no caching layer) by ``notebooks/Figure06_cpSummary.ipynb``,
    ``notebooks/Make_RRMatrix.ipynb``, and ``notebooks/Test_cpData.ipynb`` --
    this call is fast (seconds), so all three just recompute it rather than
@@ -247,6 +253,9 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
             # any bound/DT analysis.
             "coin_count": pd.to_numeric(tmp["coins_count"], errors="coerce").to_numpy(dtype=float),
             "snr": (tmp["step_mean_val"] / tmp["step_std_val"]).to_numpy(dtype=float),
+            # Per-step noise SD; with snr this recovers the generative mean
+            # (|snr| * step_std) that CP calibrations must be simulated at.
+            "step_std": tmp["step_std_val"].abs().to_numpy(dtype=float),
             "steps": [None] * n_trials,
             "congruence": [None] * n_trials,
             "rt_cutoff": np.ones(n_trials),
@@ -432,6 +441,17 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
     # correct -- the calibration files are specific to the midpoint estimator
     # used by the other task types and would corrupt PD's exact bounds.
     if correct_bias and task_type != "PD" and os.path.exists(correct_bias):
+        if is_sc:
+            # CP SNRs are fixed by the task design (not staircase-calibrated
+            # per subject as in MX/OL), so the calibration must have been
+            # simulated at exactly the SNRs in the data. Fail loudly rather
+            # than silently binning trials into a calibration built for a
+            # different design (as happened when the 2026 task raised high
+            # SNR from 0.4 to 0.6).
+            calib = scipy.io.loadmat(correct_bias, squeeze_me=True)
+            if "snrs" not in calib:
+                raise ValueError(f"{correct_bias} has no 'snrs' field; cannot verify it matches the CP data.")
+            check_calibration_snrs(calib["snrs"], data_table, source=correct_bias)
         data_table = apply_bias_corrections(data_table, correct_bias)
 
     return data_table
@@ -1194,6 +1214,127 @@ def get_bound_summary(data_table, correct_only=False, blocks="all",
                     bound_summary_[si, bi, ni, 0, :] = _summarize(l_snr)
 
     return bound_summary_
+
+
+def get_cp_generative_params(data_table, decimals=6):
+    """Generative step mean and SD of the CP task's two fixed-SNR blocks, read from the data.
+
+    The single source of truth for the CP task's SNR design: calibration
+    notebooks (Make_RRMatrix, Make_biasCorrection Part 2) should simulate at
+    these values rather than hardcoding them, and loaders
+    (`load_cp_rr_mats`, `get_data_table`'s bias-correction check) verify
+    saved calibrations against them.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        MXSC data table from `get_data_table` (needs block_index, snr,
+        step_std). Canonical blocks 1/2 are the fixed low-/high-SNR blocks.
+    decimals : int
+        Rounding applied before checking that each block has a single value
+        (absorbs floating-point noise in the logged step values).
+
+    Returns
+    -------
+    dict
+        {'low': (mean, std), 'high': (mean, std)} per-step generative
+        parameters of the low- and high-SNR conditions.
+
+    Raises
+    ------
+    ValueError
+        If either fixed block is missing or has more than one distinct
+        (mean, std) pair across subjects -- i.e. the data mix task designs.
+    """
+    params = {}
+    for name, block in (("low", 1), ("high", 2)):
+        rows = data_table[data_table["block_index"] == block]
+        means = np.unique(np.round((rows["snr"].abs() * rows["step_std"]).dropna(), decimals))
+        stds = np.unique(np.round(rows["step_std"].dropna(), decimals))
+        if len(means) != 1 or len(stds) != 1:
+            raise ValueError(
+                f"Block {block} ({name} SNR) has generative means {means.tolist()} and SDs "
+                f"{stds.tolist()}; expected exactly one of each (are task designs mixed?)."
+            )
+        params[name] = (float(means[0]), float(stds[0]))
+    return params
+
+
+def check_calibration_snrs(calibrated_snrs, data_table, source="calibration", atol=1e-3):
+    """Raise if any SNR in the data was not simulated by a calibration.
+
+    Parameters
+    ----------
+    calibrated_snrs : array-like
+        SNRs the calibration was simulated at (e.g. the `snrs` field of
+        boundBiasCorrection_CP.mat).
+    data_table : pd.DataFrame
+        Data table with an `snr` column.
+    source : str
+        Name of the calibration, used in the error message.
+    atol : float
+        Absolute tolerance for matching a data SNR to a calibrated one.
+
+    Raises
+    ------
+    ValueError
+        If any finite |snr| in the data is farther than `atol` from every
+        calibrated SNR.
+    """
+    calibrated = np.atleast_1d(np.asarray(calibrated_snrs, dtype=float))
+    data_snrs = np.unique(np.round(data_table["snr"].abs().dropna(), 6))
+    unmatched = [float(s) for s in data_snrs if not np.any(np.abs(calibrated - s) <= atol)]
+    if unmatched:
+        raise ValueError(
+            f"{source} was simulated at SNRs {np.round(calibrated, 4).tolist()}, but the data "
+            f"contain SNRs {unmatched} it does not cover. Rebuild it for the current task design."
+        )
+
+
+def load_cp_rr_mats(path, data_table):
+    """Load the CP reward-rate matrices, verifying they match the data's task design.
+
+    Parameters
+    ----------
+    path : str or Path
+        RRMats.mat saved by notebooks/Make_RRMatrix.ipynb.
+    data_table : pd.DataFrame
+        MXSC data table from `get_data_table` (canonical block numbering).
+
+    Returns
+    -------
+    dict
+        The loaded .mat contents (`squeeze_me=True, struct_as_record=False`),
+        with `pmats` (LowHigh, HighLow), `bounds`, `cp_steps_lh`,
+        `cp_steps_hl`, `g_means`, `g_std`.
+
+    Raises
+    ------
+    ValueError
+        If the matrices were simulated at different generative means/SD than
+        the data's fixed blocks, or if any CP step in the data (blocks 3/4)
+        is missing from the matrices' CP-step axis.
+    """
+    rr_mat = scipy.io.loadmat(path, squeeze_me=True, struct_as_record=False)
+    gen = get_cp_generative_params(data_table)
+    expected_means = [gen["low"][0], gen["high"][0]]
+    expected_std = gen["low"][1]
+    if gen["high"][1] != expected_std:
+        raise ValueError(f"Low/high blocks use different step SDs: {gen}")
+    saved_means = np.atleast_1d(rr_mat["g_means"]).astype(float)
+    saved_std = float(rr_mat["g_std"])
+    if not (np.allclose(saved_means, expected_means) and np.isclose(saved_std, expected_std)):
+        raise ValueError(
+            f"{path} was simulated with g_means={saved_means.tolist()}, g_std={saved_std}, but the "
+            f"data's fixed blocks use means {expected_means}, std {expected_std}. "
+            "Rebuild it with notebooks/Make_RRMatrix.ipynb."
+        )
+    for block, key in ((3, "cp_steps_lh"), (4, "cp_steps_hl")):
+        data_steps = np.unique(data_table.loc[data_table["block_index"] == block, "change_point"].dropna())
+        missing = np.setdiff1d(data_steps, np.atleast_1d(rr_mat[key]).astype(float))
+        if missing.size:
+            raise ValueError(f"{path} {key} lacks CP steps present in the data: {missing.astype(int).tolist()}")
+    return rr_mat
 
 
 @dataclass
