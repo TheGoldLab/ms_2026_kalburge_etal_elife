@@ -1,6 +1,62 @@
-﻿/******************* 
+﻿/*******************
  * Pigeontask Test *
  *******************/
+
+/*
+ * MXSC pigeon-tracking decision task (PsychoJS).
+ *
+ * This file is compiled by the PsychoPy Builder from PigeonTask.psyexp -- most of it
+ * (component construction, per-frame setPos/setSize/setAutoDraw calls, loop/scheduler
+ * wiring) is Builder-managed boilerplate that mirrors the .psyexp file 1:1 and should be
+ * edited via the Builder, not by hand. The only hand-written logic lives in the
+ * "Run 'Begin/Each Frame/End Routine' code from <component>" blocks; those are what carry
+ * the task's actual behavior and are documented in place below.
+ *
+ * Task idea: a pigeon ("Petey") starts at the center of the screen and takes a biased 2D
+ * random walk (see move_pigeon_function) that drifts toward a left or right seed pile. The
+ * bias magnitude (SNR) is set per block. On each step
+ * the participant may press Left/Right to commit to a choice ("which pile will Petey end up
+ * at"); the trial ends on a response, on reaching the screen edge, or after
+ * STEPS_MAX_PER_TRIAL steps with no response (timeout, no choice recorded).
+ *
+ * Session flow (see the flowScheduler wiring below):
+ *   consent -> experiment_setup (global config) -> general_instructions_loop (from
+ *   PigeonGeneralInstructionsConditions.xlsx) -> simple_demo_block_loop (practice trials
+ *   with visible pigeon/seeds but no response required, from
+ *   PigeonSimpleDemoConditions.xlsx) -> status_instruction_loop (explains the coins/steps
+ *   status bars, from PigeonStatusInstructionsConditions.xlsx) -> experiment_loop (the real
+ *   task blocks, one per row of PigeonTaskConditions.xlsx) -> final_message ->
+ *   show_final_message.
+ *
+ * Each row of PigeonTaskConditions.xlsx is one block and drives start_task via columns
+ * imported as tc_* globals (tc_block_type, tc_step_mean, tc_step_std, tc_steps_max,
+ * tc_changepoint, ...). block_type identifies the block design:
+ *   - "fixed_low" / "fixed_high": constant low- or high-SNR drift for the whole block, no
+ *     changepoint. Used both to give the participant a stable block and to calibrate
+ *     low_switch_time / high_switch_time (the changepoint step count used by "change_*"
+ *     blocks below) from the median observed RT (in steps), and to screen for
+ *     RT-extremity exclusion (see check_rt_extremity).
+ *   - "change_low" / "change_high": starts at low (resp. high) SNR and switches to the
+ *     other SNR mid-trial, once steps_in_trial reaches low_switch_time/high_switch_time,
+ *     preserving the trial's drawn direction (correct_ans) across the switch.
+ * Every block's objective is a fixed step budget (steps_max): play trials until the budget
+ * runs out, earning an end-of-block bonus if coins_count reaches coins_max first (see
+ * set_block_end_string). An earlier "score" objective variant has been removed.
+ *
+ * Every condition-loop in this file (general_instructions_loop, simple_demo_block_loop,
+ * status_instruction_loop, experiment_loop, instructions_loop) imports one row of its xlsx
+ * file per iteration via importConditions(), which dumps that row's columns into globals
+ * named by the sheet's own prefix convention: gic_* (general instructions), sdc_* (simple
+ * demo), sic_* (status instructions), tc_* (task/block), ic_* (per-block instructions,
+ * chosen by instructions_type = block_type.split("_")[0] -> Pigeon_<type>_InstructionsConditions.xlsx).
+ * Those globals only exist once the corresponding loop has run at least one iteration.
+ *
+ * trial_loop and move_loop are both declared with a large fixed nReps (10000 / 1000) and
+ * are not meant to run that many times in practice -- they are open-ended counters that the
+ * task code itself terminates early by setting trial_loop.finished / move_loop.finished
+ * once a block's step/coin budget is exhausted (trial_loop) or a trial ends (move_loop).
+ * Each move_loop iteration is one call to task_run, i.e. one animation step of Petey's walk.
+ */
 
 import { core, data, sound, util, visual, hardware } from './lib/psychojs-2023.1.2.js';
 const { PsychoJS } = core;
@@ -22,7 +78,10 @@ let expInfo = {
 // Run 'Before Experiment' code from es_code_setup
 
 // Changepoint timing is always derived from the median RT (in steps) of the preceding
-// fixed-SNR block, rounded to an integer step count.
+// fixed-SNR block, rounded to an integer step count. `arr` is a list of per-trial RTs
+// measured in pigeon-walk steps (RT_low/RT_high, each entry = pigeon_steps.length from that
+// trial), not seconds. Falls back to 10 steps if no RTs were collected (e.g. an empty
+// fixed block), so a later change_low/change_high block still has a usable switch_time.
 function calculate_median(arr) {
     if (arr.length === 0) return 10;
 
@@ -43,15 +102,19 @@ function trim_warmup_trials(arr) {
 // Flags participants whose RT distribution on a fixed-SNR block is too extreme to be
 // usable: guessing on (almost) every trial (median RT below RT_TOO_FAST_STEPS) or mostly
 // not responding within the trial (median RT above RT_TOO_SLOW_STEPS, or too large a
-// fraction of trials timing out at STEPS_MAX_PER_TRIAL). Returns null if the RTs look
-// usable, otherwise a short reason string used to end the session early (see fm_code_setup).
-function check_rt_extremity(rts) {
+// fraction of trials timing out at STEPS_MAX_PER_TRIAL). `rts` is the (warmup-trimmed) list
+// of responded-trial RTs used for the median check; `timeout_fraction` is computed
+// separately by the caller from low_timeout_count/high_timeout_count (see task_runRoutineEnd)
+// rather than derived from `rts`, since `rts` only ever contains trials that got a response
+// -- a real timeout never appears in it, so a fraction computed from `rts` alone could never
+// detect "frequently not responding" at all. Returns null if the block's RTs look usable,
+// otherwise a short reason string used to end the session early (see fm_code_setup).
+function check_rt_extremity(rts, timeout_fraction) {
     if (rts.length === 0) return null;
     let sorted = rts.slice().sort((a, b) => a - b);
     let n = sorted.length;
     let mid = Math.floor(n / 2);
     let median_rt = n % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-    let timeout_fraction = rts.filter((rt) => rt >= STEPS_MAX_PER_TRIAL).length / n;
     if (median_rt < RT_TOO_FAST_STEPS) return "too_fast";
     if (median_rt > RT_TOO_SLOW_STEPS || timeout_fraction > RT_TIMEOUT_FRACTION_MAX) return "too_slow";
     return null;
@@ -68,6 +131,42 @@ psychoJS.openWindow({
   units: 'height',
   waitBlanking: true
 });
+
+// Guard against the layout breaking under a narrow (portrait-ish) browser window. With
+// units: 'height', PsychoJS scales every stim from Math.min(window.width, window.height)
+// (see WindowMixin._getLengthPix in the PsychoJS source) rather than from height alone, so
+// once the window becomes narrower than about 1.6x its own height, elements positioned near
+// the edges of this task's (16:9-oriented) layout -- status-bar labels, seed piles -- land
+// outside the visible canvas and get clipped, and everything on screen rescales/shifts the
+// moment width crosses below height. Rather than reflow the whole layout for arbitrary
+// aspect ratios, block the view with a "please widen your window" overlay whenever the
+// window is too narrow, and reveal the (correctly laid out, since the ratio is safe again)
+// task underneath once it's wide enough.
+const MIN_WINDOW_ASPECT_RATIO = 1.6;
+const aspectRatioOverlay = document.createElement('div');
+aspectRatioOverlay.id = 'aspect-ratio-overlay';
+aspectRatioOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;'
+  + 'background:black;color:white;align-items:center;justify-content:center;'
+  + 'text-align:center;font-family:sans-serif;font-size:1.5em;padding:2em;box-sizing:border-box;';
+aspectRatioOverlay.textContent = 'Please widen your browser window (or rotate your device to '
+  + 'landscape) to continue. This task needs a window that is significantly wider than it is tall.';
+document.body.appendChild(aspectRatioOverlay);
+function _updateAspectRatioOverlay() {
+  const tooNarrow = (window.innerWidth / window.innerHeight) < MIN_WINDOW_ASPECT_RATIO;
+  aspectRatioOverlay.style.display = tooNarrow ? 'flex' : 'none';
+}
+window.addEventListener('resize', _updateAspectRatioOverlay);
+window.addEventListener('orientationchange', _updateAspectRatioOverlay);
+// Swallow keyboard input while the overlay covers a too-narrow window, so a participant
+// can't blindly commit a response (e.g. Left/Right) they can't see. Registered on the
+// capture phase so it runs, and can stop propagation, before PsychoJS's own key listeners.
+document.addEventListener('keydown', function(event) {
+  if (aspectRatioOverlay.style.display === 'flex') {
+    event.stopImmediatePropagation();
+  }
+}, true);
+_updateAspectRatioOverlay();
+
 // schedule the experiment:
 psychoJS.schedule(psychoJS.gui.DlgFromDict({
   dictionary: expInfo,
@@ -78,7 +177,12 @@ const flowScheduler = new Scheduler(psychoJS);
 const dialogCancelScheduler = new Scheduler(psychoJS);
 psychoJS.scheduleCondition(function() { return (psychoJS.gui.dialogComponent.button === 'OK'); }, flowScheduler, dialogCancelScheduler);
 
-// flowScheduler gets run if the participants presses OK
+// flowScheduler gets run if the participants presses OK.
+// This is the top-level session flow described in the file header: consent -> setup ->
+// general instructions -> practice demo -> status-bar instructions -> the real task blocks
+// (experiment_loop) -> final message(s). Each "Routine" trio (Begin/EachFrame/End) below runs
+// once per screen; each "Loop" wraps a TrialHandler that repeats a sub-sequence of routines
+// once per row of an xlsx conditions file (or, for trial_loop/move_loop, once per trial/step).
 flowScheduler.add(updateInfo); // add timeStamp
 flowScheduler.add(experimentInit);
 flowScheduler.add(consentRoutineBegin());
@@ -130,7 +234,6 @@ psychoJS.start({
     {'name': 'Resources/moon.png', 'path': 'Resources/moon.png'},
     {'name': 'Resources/Pigeon_change_InstructionsConditions.xlsx', 'path': 'Resources/Pigeon_change_InstructionsConditions.xlsx'},
     {'name': 'Resources/Pigeon_fixed_InstructionsConditions.xlsx', 'path': 'Resources/Pigeon_fixed_InstructionsConditions.xlsx'},
-    {'name': 'Resources/Pigeon_mixed_InstructionsConditions.xlsx', 'path': 'Resources/Pigeon_mixed_InstructionsConditions.xlsx'},
     {'name': 'Resources/pigeon.png', 'path': 'Resources/pigeon.png'},
     {'name': 'Resources/PigeonGeneralInstructionsConditions.xlsx', 'path': 'Resources/PigeonGeneralInstructionsConditions.xlsx'},
     {'name': 'Resources/PigeonSimpleDemoConditions.xlsx', 'path': 'Resources/PigeonSimpleDemoConditions.xlsx'},
@@ -182,10 +285,6 @@ var consent_mouse;
 var consent_acknowledge;
 var experiment_setupClock;
 var exp_type;
-var still_going;
-var choice;
-var experiment_task_conditions_file;
-var dummy_mode;
 var white;
 var grey;
 var yellow;
@@ -208,11 +307,6 @@ var INSTRUCTION_Y;
 var INSTRUCTION_COLOR;
 var CHOICE_STRING;
 var CONTINUE_STRING;
-var PREDEFINED_CHOICE_STRING;
-var PREDEFINED_CHOICE_COMMIT_STRING;
-var PREDEFINED_NO_CHOICE_STRING;
-var PREDEFINED_ABORT_INSTRUCTION;
-var PREDEFINED_ABORT_STRING;
 var CORRECT_STRING;
 var ERROR_STRING;
 var NO_CHOICE_STRING;
@@ -268,29 +362,12 @@ var coins_bar_center;
 var env_bar_height;
 var env_bar_width;
 var env_bar_center;
-var PREDEFINED_BOUND_COLOR;
-var PREDEFINED_BOUND_WIDTH;
-var PREDEFINED_BOUND_HEIGHT;
-var PREDEFINED_BOUND_Y;
-var PREDEFINED_BOUND_SMALL_DELTA;
-var PREDEFINED_BOUND_LARGE_DELTA;
-var PREDEFINED_BOUND_X_DEFAULT;
-var PREDEFINED_BOUND_MARKER_SZ;
-var PREDEFINED_BOUND_MARKER_Y;
-var PREDEFINED_BOUND_MARKER_COLOR;
-var predefined_bound_x;
-var predefined_bound_x_previous;
-var committed_to_bound;
-var predefined_bound_min_bonus;
-var predefined_bound_max_bonus;
-var min_steps_to_commit;
 var seeds_show;
 var pigeon_show;
 var status_show;
 var box_show;
 var UPDATE_INTERVAL;
 var ITI;
-var PREDEFINED_UPDATE_INTERVAL;
 var block_number;
 var cal_block_number;
 var test_block_number;
@@ -325,7 +402,6 @@ var pigeon_true_x;
 var pigeon_shown_x;
 var pigeon_steps;
 var move_pigeon;
-var rng_trial_type;
 var update_status;
 var set_trial_end_string;
 var set_block_end_string;
@@ -418,7 +494,7 @@ async function experimentInit() {
   consent_txt = new visual.TextBox({
     win: psychoJS.window,
     name: 'consent_txt',
-    text: 'This is an academic research project conducted through the University of Pennsylvania. In this game, a pigeon will wander from the center of the screen to one of two seed piles on the left or right. Your goal is either to guess the direction the pigeon will ultimately choose or set a cut-off for the pigeon’s movement to make a choice based on their current location.\n\nThe estimated total time is about 30 minutes.\n\nYou must be at least 18 years old to participate. Your participation in this research is voluntary, which means you can choose whether or not to participate without negative consequences. Your anonymity is assured: the researchers who have requested your participation will not receive any personal information about you except your previously provided Prolific demographic data such as gender, ethnicity, and age. The de-identified data may be stored and distributed for future research studies without additional informed consent.\n\nIf you have questions about this research, please contact Ishan Kalburge by emailing ikalbur1@jhu.edu or Josh Gold by emailing jigold@pennmedicine.upenn.edu.\n\nIf you have questions, concerns, or complaints regarding your participation in this research study, or if you have any questions about your rights as a research subject and you cannot reach a member of the study team, you may contact the Office of Regulatory Affairs at the University of Pennsylvania by calling (215) 898-2614 or emailing irb@pobox.upenn.edu.\n',
+    text: 'This is an academic research project conducted through the University of Pennsylvania. In this game, a pigeon will wander from the center of the screen to one of two seed piles on the left or right. Your goal is to guess the direction the pigeon will ultimately choose.\n\nThe estimated total time is about 30 minutes.\n\nYou must be at least 18 years old to participate. Your participation in this research is voluntary, which means you can choose whether or not to participate without negative consequences. Your anonymity is assured: the researchers who have requested your participation will not receive any personal information about you except your previously provided Prolific demographic data such as gender, ethnicity, and age. The de-identified data may be stored and distributed for future research studies without additional informed consent.\n\nIf you have questions about this research, please contact Ishan Kalburge by emailing ikalbur1@jhu.edu or Josh Gold by emailing jigold@pennmedicine.upenn.edu.\n\nIf you have questions, concerns, or complaints regarding your participation in this research study, or if you have any questions about your rights as a research subject and you cannot reach a member of the study team, you may contact the Office of Regulatory Affairs at the University of Pennsylvania by calling (215) 898-2614 or emailing irb@pobox.upenn.edu.\n',
     placeholder: 'Type here...',
     font: 'Open Sans',
     pos: [0, 0], 
@@ -482,12 +558,16 @@ async function experimentInit() {
   // Initialize components for Routine "experiment_setup"
   experiment_setupClock = new util.Clock();
   // Run 'Begin Experiment' code from es_code_setup
+  //
+  // Global task configuration, run once at experiment start. Sets up colors, screen
+  // geometry, status-bar layout, default reward/step economy, and the shared helper
+  // functions (move_pigeon, update_status, set_trial_end_string,
+  // set_block_end_string) used throughout task_run and the other routines below.
+  //
+  // exp_type picks which env image pair frames the block (sun/moon for "snr", tree/cactus
+  // for "reward"); it's hardcoded to 'snr' here and never read again after computing
+  // high_env_img/low_env_img just below, so the "reward" image pair is currently unreachable.
   exp_type = 'snr';
-  still_going = true;
-  choice = "";
-  //experiment_task_conditions_file = (("Resources/PigeonsTaskConditions" + util.randint(1, 5).toString()) + ".xlsx");
-  experiment_task_conditions_file = ("Resources/PigeonsTaskConditions1.xlsx");
-  dummy_mode = false;
   white = new util.Color([1, 1, 1]);
   grey = new util.Color([0.2, 0.2, 0.2]);
   yellow = new util.Color([1, 1, 0]);
@@ -510,11 +590,6 @@ async function experimentInit() {
   INSTRUCTION_COLOR = yellow;
   CHOICE_STRING = "Press Left or Right arrow to choose";
   CONTINUE_STRING = "Press Spacebar or any arrow to continue";
-  PREDEFINED_CHOICE_STRING = "Press Left/Up for small/large increases, Right/Down for small/large decreases,\nSpacebar to start the trial.";
-  PREDEFINED_CHOICE_COMMIT_STRING = "Press Left/Up for small/large increases, Right/Down for small/large decreases,\nc to commit or Spacebar to start the trial.";
-  PREDEFINED_NO_CHOICE_STRING = "Petey failed to reach the bound\nConsider moving it closer.";
-  PREDEFINED_ABORT_INSTRUCTION = "Press Spacebar or any arrow to abort trial";
-  PREDEFINED_ABORT_STRING = "Aborted early";
   CORRECT_STRING = "Correct";
   ERROR_STRING = "Error";
   NO_CHOICE_STRING = "Failed to respond\nPlease respond more quickly";
@@ -578,29 +653,12 @@ async function experimentInit() {
   env_bar_height = 0;
   env_bar_width = 0;
   env_bar_center = ENV_X - ENV_BAR_WIDTH/2;
-  PREDEFINED_BOUND_COLOR = green;
-  PREDEFINED_BOUND_WIDTH = 0.2;
-  PREDEFINED_BOUND_HEIGHT = 0.01;
-  PREDEFINED_BOUND_Y = (ORIGIN_Y + 0.05);
-  PREDEFINED_BOUND_SMALL_DELTA = 0.003;
-  PREDEFINED_BOUND_LARGE_DELTA = 0.05;
-  PREDEFINED_BOUND_X_DEFAULT = 0.05;
-  PREDEFINED_BOUND_MARKER_SZ = 0.01;
-  PREDEFINED_BOUND_MARKER_Y = 0.16;
-  PREDEFINED_BOUND_MARKER_COLOR = lightgreen;
-  predefined_bound_x = PREDEFINED_BOUND_X_DEFAULT;
-  predefined_bound_x_previous = predefined_bound_x;
-  committed_to_bound = false;
-  predefined_bound_min_bonus = 0;
-  predefined_bound_max_bonus = 0;
-  min_steps_to_commit = 100;
   seeds_show = false;
   pigeon_show = false;
   status_show = false;
   box_show = false;
   UPDATE_INTERVAL = 0.200;
   ITI = 0.7;
-  PREDEFINED_UPDATE_INTERVAL = 0.1;
   block_number = 0;
   cal_block_number = 0;
   test_block_number = 0;
@@ -640,6 +698,21 @@ async function experimentInit() {
   pigeon_shown_x = pigeon_true_x;
   pigeon_steps = [];
   
+  // Advances Petey one step: draws new_step ~ Normal(step_mean, step_std) and adds it to
+  // pigeon_true_x (the unclamped position used for the random walk), then clamps the drawn
+  // position to +/-EDGE_DISTANCE for display as pigeon_shown_x. pigeon_flip is set from the
+  // sign of this single step (not the block's mean direction), so Petey's sprite faces the
+  // direction of its most recent move rather than its eventual destination.
+  //
+  // Gaussian draw is the Marsaglia polar method (a Box-Muller variant): repeatedly sample
+  // (u, v) uniform on [-1, 1] until r = u^2+v^2 falls in (0, 1) (i.e. (u,v) lands inside the
+  // unit circle, excluding the origin), then u*sqrt(-2*ln(r)/r) is a standard normal
+  // variate. The loop caps at 10 attempts; each attempt succeeds independently with
+  // probability pi/4, so the chance of exhausting all 10 without a valid (u, v) is
+  // ~(1-pi/4)^10 ~ 3e-7 per step. In that vanishingly rare case the loop falls through with
+  // r outside (0, 1) (possibly r === 0), making Math.log(r)/r undefined or infinite and
+  // producing a NaN step that would permanently derail pigeon_true_x for the rest of that
+  // trial (reset again at the next trial_start). Not worth guarding against in practice.
   function move_pigeon_function(step_mean, step_std) {
       var new_step, r, u, v;
       for (var i, _pj_c = 0, _pj_a = util.range(10), _pj_b = _pj_a.length; (_pj_c < _pj_b); _pj_c += 1) {
@@ -668,21 +741,13 @@ async function experimentInit() {
           }
       }
   }
-  function rng_trial_type_function() {
-      var x;
-      x = Math.random();
-      return x;
-  }
-  function update_status_function(update_text, update_coins_bar, update_steps_bar, update_env_bar, obj) {
+  // Recomputes the on-screen coins/steps status-bar text and bar heights, and (for
+  // changepoint blocks) the shrinking "steps to changepoint" bar. Each boolean flag opts in
+  // to updating that piece of state.
+  function update_status_function(update_text, update_coins_bar, update_steps_bar, update_env_bar) {
       if (update_text) {
           coins_string = ((("Coins gained per correct choice = " + coins_gained_per_correct.toString()) + "\nCoins lost per error choice = ") + coins_lost_per_error.toString());
-          if ((obj === "score")) {
-              coins_string = ((((("Coins gained per correct choice = " + coins_gained_per_correct.toString()) + "\nCoins lost per error choice = ") + coins_lost_per_error.toString()) + "\nTarget number of coins = ") + coins_max.toString());
-          }
-          steps_string = "";
-          if ((obj === "steps")) {
-              steps_string = ("Total steps budget = " + steps_max.toString());
-          }
+          steps_string = ("Total steps budget = " + steps_max.toString());
       }
       if (update_coins_bar) {
           if ((coins_count <= coins_max)) {
@@ -693,15 +758,7 @@ async function experimentInit() {
           coins_bar_center = (STATUS_BAR_BASE_Y + (coins_bar_height / 2));
       }
       if (update_steps_bar) {
-          if ((obj === "steps")) {
-              steps_bar_height = (((steps_max - steps_count) / steps_max) * STATUS_BAR_HEIGHT);
-          } else {
-              if ((steps_count <= steps_max)) {
-                  steps_bar_height = ((steps_count / steps_max) * STATUS_BAR_HEIGHT);
-              } else {
-                  steps_bar_height = (STATUS_BAR_HEIGHT + 0.02);
-              }
-          }
+          steps_bar_height = (((steps_max - steps_count) / steps_max) * STATUS_BAR_HEIGHT);
           steps_bar_center = (STATUS_BAR_BASE_Y + (steps_bar_height / 2));
       }
       if (update_env_bar) {
@@ -713,6 +770,9 @@ async function experimentInit() {
       }
   
   }
+  // Builds the between-trial feedback message ("Correct"/"Error"/no-choice + coins and
+  // steps delta since the last trial) and rolls last_coins_count/last_steps_count forward
+  // so the next call reports only this trial's change.
   function set_trial_end_string_function(feedback_string) {
       var coins_change, coins_feedback_string, steps_change;
       coins_change = (coins_count - last_coins_count);
@@ -731,8 +791,10 @@ async function experimentInit() {
       last_steps_count = steps_count;
   }
   
+  // Builds the end-of-block message and awards a bonus (bonus_count += 1, coins bar filled)
+  // if coins_count reached coins_max before the step budget ran out.
   function set_block_end_string_function() {
-      if (((task_objective === "steps") && (coins_count >= coins_max))) {
+      if ((coins_count >= coins_max)) {
           message_string = "Block finished.\n\nYou earned a bonus. Great job!";
           bonus_count += 1;
           coins_bar_height = STATUS_BAR_HEIGHT;
@@ -745,11 +807,10 @@ async function experimentInit() {
   }
   
   move_pigeon = move_pigeon_function;
-  rng_trial_type = rng_trial_type_function;
   update_status = update_status_function;
   set_trial_end_string = set_trial_end_string_function;
   set_block_end_string = set_block_end_string_function;
-  update_status(true, true, true, false, "steps");
+  update_status(true, true, true, false);
   
   // Initialize components for Routine "general_instructions_setup"
   general_instructions_setupClock = new util.Clock();
@@ -1770,6 +1831,8 @@ function experiment_setupRoutineEnd(snapshot) {
 }
 
 
+// LOOP "general_instructions_loop": 1 pass over PigeonGeneralInstructionsConditions.xlsx,
+// one general_instructions_setup + show_message per row.
 var general_instructions_loop;
 function general_instructions_loopLoopBegin(general_instructions_loopLoopScheduler, snapshot) {
   return async function() {
@@ -1834,6 +1897,9 @@ function general_instructions_loopLoopEndIteration(scheduler, snapshot) {
 }
 
 
+// LOOP "simple_demo_block_loop": 1 pass over PigeonSimpleDemoConditions.xlsx (one practice
+// demo block per row); each iteration runs simple_demo_setup + show_message, then the nested
+// simple_demo_trial_loop below animates that demo block's walk.
 var simple_demo_block_loop;
 function simple_demo_block_loopLoopBegin(simple_demo_block_loopLoopScheduler, snapshot) {
   return async function() {
@@ -1872,6 +1938,10 @@ function simple_demo_block_loopLoopBegin(simple_demo_block_loopLoopScheduler, sn
 }
 
 
+// LOOP "simple_demo_trial_loop": nested inside simple_demo_block_loop. nReps: 1000 is a
+// generous cap, not a real trial count -- each iteration is one "simple_demo" animation
+// step, and the loop self-terminates (simple_demo_trial_loop.finished = true, set inside
+// simple_demoRoutineBegin) once Petey reaches an edge or the fixed 50-step demo ends.
 var simple_demo_trial_loop;
 function simple_demo_trial_loopLoopBegin(simple_demo_trial_loopLoopScheduler, snapshot) {
   return async function() {
@@ -1963,6 +2033,8 @@ function simple_demo_block_loopLoopEndIteration(scheduler, snapshot) {
 }
 
 
+// LOOP "status_instruction_loop": 1 pass over PigeonStatusInstructionsConditions.xlsx (the
+// coins/steps status-bar walkthrough), one status_instruction_setup + show_message per row.
 var status_instruction_loop;
 function status_instruction_loopLoopBegin(status_instruction_loopLoopScheduler, snapshot) {
   return async function() {
@@ -2027,6 +2099,10 @@ function status_instruction_loopLoopEndIteration(scheduler, snapshot) {
 }
 
 
+// LOOP "experiment_loop": THE BLOCK LOOP. 1 pass over PigeonTaskConditions.xlsx, one real
+// task block per row (start_task loads that row's tc_* columns; see start_taskRoutineBegin
+// for the block_type designs). Per block: start_task -> show_message -> instructions_loop
+// (block-type-specific instructions) -> trial_loop (the block's trials).
 var experiment_loop;
 function experiment_loopLoopBegin(experiment_loopLoopScheduler, snapshot) {
   return async function() {
@@ -2069,6 +2145,9 @@ function experiment_loopLoopBegin(experiment_loopLoopScheduler, snapshot) {
 }
 
 
+// LOOP "instructions_loop": 1 pass over Resources/Pigeon_<fixed|change>_InstructionsConditions.xlsx
+// (chosen by start_task's instructions_conditions_file, based on this block's type), one
+// setup_instructions_message + show_message per row.
 var instructions_loop;
 function instructions_loopLoopBegin(instructions_loopLoopScheduler, snapshot) {
   return async function() {
@@ -2133,6 +2212,14 @@ function instructions_loopLoopEndIteration(scheduler, snapshot) {
 }
 
 
+// LOOP "trial_loop": nested inside experiment_loop, one iteration per trial within the
+// current block. nReps: online_trials_count (10000, set by start_task) is a large cap, not
+// a real trial count -- trials keep running (each iteration: move_loop, then show_message
+// for the between-trial feedback screen) until the block's step/coin budget runs out and
+// trial_loop.finished is set (see the block-budget check in otr_code_update, task_run's
+// Begin Routine code). method: FULLRANDOM has no effect here since trialList is undefined
+// (there is nothing to randomize order over -- each "trial" is generated fresh by task_run,
+// not drawn from a per-trial conditions list).
 var trial_loop;
 function trial_loopLoopBegin(trial_loopLoopScheduler, snapshot) {
   return async function() {
@@ -2168,6 +2255,10 @@ function trial_loopLoopBegin(trial_loopLoopScheduler, snapshot) {
 }
 
 
+// LOOP "move_loop": nested inside trial_loop, one iteration per animation step of a single
+// trial's pigeon walk. nReps: 1000 is a generous cap (comfortably above STEPS_MAX_PER_TRIAL);
+// the loop actually ends via move_loop.finished, set in task_runRoutineEnd (otr_code_update)
+// on a response, a block-budget exhaustion, or the STEPS_MAX_PER_TRIAL timeout.
 var move_loop;
 function move_loopLoopBegin(move_loopLoopScheduler, snapshot) {
   return async function() {
@@ -2293,6 +2384,10 @@ function experiment_loopLoopEndIteration(scheduler, snapshot) {
 }
 
 
+// ROUTINE PAIR "general_instructions_setup" + "show_message" (looped once per row of
+// PigeonGeneralInstructionsConditions.xlsx by general_instructions_loop): a static
+// text/image screen shown before any task blocks, with gic_* columns controlling whether
+// the pigeon/seeds are shown alongside the instruction text (gic_message).
 var general_instructions_setupComponents;
 function general_instructions_setupRoutineBegin(snapshot) {
   return async function () {
@@ -2376,6 +2471,13 @@ function general_instructions_setupRoutineEnd(snapshot) {
 }
 
 
+// ROUTINE "show_message": the generic "wait for a keypress on a message screen" routine,
+// reused after every instructions/setup routine and after every block/trial-loop
+// (waits on space/arrows, ends on any of them). Draws from the *current* values of the
+// shared display globals (message_string, instruction_string, coins_/steps_ bar state,
+// pigeon_shown_x, env_img, ...) set by whichever routine ran immediately before it, plus
+// the show/hide flags (status_show, pigeon_show, seeds_show, box_show, message_show,
+// instruction_show) that gate which of its components are actually drawn.
 var _sm_kbd_continue_allKeys;
 var show_messageComponents;
 function show_messageRoutineBegin(snapshot) {
@@ -2722,6 +2824,9 @@ function show_messageRoutineEnd(snapshot) {
     }
     sm_kbd_continue.stop();
     // Run 'End Routine' code from sm_code_update
+    // Every show_message is followed (per trial_loop's scheduling) by another task_run call;
+    // setting trial_start here is what tells that next task_run to initialize a fresh trial
+    // rather than continue animating the one that just ended.
     trial_start = true;
     
     // the Routine "show_message" was not non-slip safe, so reset the non-slip timer
@@ -2736,6 +2841,14 @@ function show_messageRoutineEnd(snapshot) {
 }
 
 
+// ROUTINE PAIR "simple_demo_setup" + "show_message" + nested "simple_demo" loop
+// (simple_demo_block_loop, looped once per row of PigeonSimpleDemoConditions.xlsx; each
+// block's own simple_demo_trial_loop then repeats the "simple_demo" routine up to 1000
+// times). This is the practice/demo phase: Petey walks automatically (no response
+// required) so the participant can watch the SNR play out. sdc_step_mean===0 with
+// sdc_step_std!==0 demos a pure random walk (no drift) that self-terminates after exactly
+// 50 steps (see simple_demoRoutineBegin); otherwise the walk runs until Petey reaches an
+// edge.
 var demo_start;
 var step_mean;
 var step_std;
@@ -2844,6 +2957,12 @@ function simple_demoRoutineBegin(snapshot) {
     continueRoutine = true; // until we're told otherwise
     // update component parameters for each repeat
     // Run 'Begin Routine' code from sd_code_update
+    // First call for this demo block (demo_start, set by simple_demo_setup): reset Petey to
+    // center and pick a random left/right sign for this demo's drift, mirroring the real
+    // task's per-trial direction draw in otr_code_update. Every later call is one animation
+    // step: advance the walk and stop the simple_demo_trial_loop once Petey reaches an edge,
+    // or -- for the no-drift demo (step_mean === 0) -- after a fixed 50 steps, since a
+    // zero-mean walk has no edge to reach and would otherwise run indefinitely.
     if (demo_start) {
         pigeon_flip = 0.1;
         pigeon_true_x = 0;
@@ -3004,6 +3123,8 @@ function simple_demoRoutineEnd(snapshot) {
       }
     }
     // Run 'End Routine' code from sd_code_update
+    // Reset the step counter used by the step_mean===0 timeout check above so the next demo
+    // block (a fresh row of simple_demo_block_loop) starts its own 50-step countdown.
     if (simple_demo_trial_loop.finished) {
         steps_count = 0;
     }
@@ -3020,7 +3141,11 @@ function simple_demoRoutineEnd(snapshot) {
 }
 
 
-var task_objective;
+// ROUTINE PAIR "status_instruction_setup" + "show_message" (status_instruction_loop, once
+// per row of PigeonStatusInstructionsConditions.xlsx): explains the coins/steps status bars
+// before the real task blocks start, using a fixed demo steps_count/coins_count state
+// (steps_count is incremented by exactly 1 below purely to make the steps bar render
+// non-empty for the screenshot-like instructional display, not as a real task step).
 var status_instruction_setupComponents;
 function status_instruction_setupRoutineBegin(snapshot) {
   return async function () {
@@ -3046,30 +3171,16 @@ function status_instruction_setupRoutineBegin(snapshot) {
     box_y = sic_box_y;
     message_string = sic_message;
     SEEDS_SCALE = sic_seeds_scale;
-    task_objective = sic_objective;
     if ((sic_img_file !== null)) {
         env_img = ("Resources/" + sic_img_file);
     } else {
         env_img = high_env_img;
     }
-    steps_label = "Steps remaining";
-    if ((task_objective === "score")) {
-        steps_label = ("Steps Threshold: " + steps_max.toString());
-    } else {
-        if ((task_objective === "steps")) {
-            steps_label = "Steps Remaining";
-        }
-    }
-    if ((task_objective === "steps")) {
-        steps_text = (steps_max - steps_count).toString();
-    } else {
-        if ((task_objective === "score")) {
-            steps_text = steps_count.toString();
-        }
-    }
+    steps_label = "Steps Remaining";
+    steps_text = (steps_max - steps_count).toString();
     coins_text = coins_count.toString();
     steps_count += 1;
-    update_status(true, true, true, false, task_objective);
+    update_status(true, true, true, false);
     
     // keep track of which components have finished
     status_instruction_setupComponents = [];
@@ -3136,9 +3247,17 @@ function status_instruction_setupRoutineEnd(snapshot) {
 }
 
 
+// ROUTINE "start_task" (experiment_loop, once per row of PigeonTaskConditions.xlsx, i.e.
+// once per block): resets all per-block state from that row's tc_* columns and clears the
+// running RT_low/RT_high/switch_occurred bookkeeping used by task_run. This is the routine
+// that decides block_type / step_mean / step_std / steps_max / changepoint for everything
+// that follows (instructions_loop, then trial_loop -> move_loop -> task_run) until the next
+// block's start_task runs.
 var _pj;
 var RT_high;
 var RT_low;
+var low_timeout_count;
+var high_timeout_count;
 var switch_occurred;
 var block_type;
 var instructions_type;
@@ -3183,10 +3302,15 @@ function start_taskRoutineBegin(snapshot) {
     last_steps_count = steps_count;
     RT_high = [];
     RT_low = [];
+    low_timeout_count = 0;
+    high_timeout_count = 0;
     switch_occurred = false;
     block_type = tc_block_type;
+    // instructions_type picks which Pigeon_<type>_InstructionsConditions.xlsx to show via
+    // instructions_loop below; it's the block_type prefix before the first "_", so
+    // "fixed_low"/"fixed_high" -> "fixed", "change_low"/"change_high" -> "change"
+    // (see PigeonTaskConditions.xlsx / Resources/Pigeon_*_InstructionsConditions.xlsx).
     instructions_type = block_type.split("_")[0];
-    task_objective = tc_task_objective;
     step_mean = tc_step_mean;
     step_std = tc_step_std;
     steps_max = tc_steps_max;
@@ -3198,11 +3322,22 @@ function start_taskRoutineBegin(snapshot) {
     coins_gained_per_correct = tc_coins_gained_per_correct;
     changepoint = tc_changepoint;
     env_img = ("Resources/" + tc_img_file);
-    if (_pj.in_es6("fixed", block_type)) {
-        step_mean_vals.push(step_mean);
-        step_mean_vals.sort();
-        step_std_vals.push(step_std);
-        step_std_vals.sort();
+    // step_mean_vals[0]/step_std_vals[0] hold the low-SNR magnitude and [1] the high-SNR
+    // magnitude, keyed explicitly by block_type rather than by conditions-file row order:
+    // a fixed_low block always writes index 0, a fixed_high block always writes index 1,
+    // regardless of which one runs first or how many of each occur (a repeated fixed_low
+    // just overwrites index 0 again). task_run (otr_code_update) relies on these indices
+    // throughout for change blocks; the one requirement that can't be removed is that
+    // one fixed_low and one fixed_high block must each have run at least once before any
+    // change_low/change_high block.
+    if (_pj.in_es6("fixed_low", block_type)) {
+        step_mean_vals[0] = step_mean;
+        step_std_vals[0] = step_std;
+    } else {
+        if (_pj.in_es6("fixed_high", block_type)) {
+            step_mean_vals[1] = step_mean;
+            step_std_vals[1] = step_std;
+        }
     }
     if ((changepoint === false)) {
         env_text = "";
@@ -3215,16 +3350,9 @@ function start_taskRoutineBegin(snapshot) {
     pigeon_flip = 0.1;
     pigeon_true_x = 0;
     pigeon_shown_x = pigeon_true_x;
-    if ((task_objective === "steps")) {
-        steps_label = "Steps remaining";
-        steps_text = (steps_max - steps_count).toString();
-    } else {
-        if ((task_objective === "score")) {
-            steps_label = ("Steps Threshold: " + steps_max.toString());
-            steps_text = steps_count.toString();
-        }
-    }
-    update_status(true, true, true, changepoint, task_objective);
+    steps_label = "Steps remaining";
+    steps_text = (steps_max - steps_count).toString();
+    update_status(true, true, true, changepoint);
     
     // keep track of which components have finished
     start_taskComponents = [];
@@ -3291,6 +3419,10 @@ function start_taskRoutineEnd(snapshot) {
 }
 
 
+// ROUTINE PAIR "setup_instructions_message" + "show_message" (instructions_loop, run once
+// per row of the block-type-specific Resources/Pigeon_<fixed|change>_InstructionsConditions.xlsx
+// selected by start_task via instructions_conditions_file): shows the instructions specific
+// to the block about to run, immediately before trial_loop starts.
 var setup_instructions_messageComponents;
 function setup_instructions_messageRoutineBegin(snapshot) {
   return async function () {
@@ -3370,12 +3502,27 @@ function setup_instructions_messageRoutineEnd(snapshot) {
 }
 
 
+// ROUTINE "task_run": the core per-step engine of the real task, called once per
+// move_loop iteration (i.e. once per ~UPDATE_INTERVAL-second animation frame of Petey's
+// walk). trial_start (true only for the first call of each trial, set by the preceding
+// show_message's End Routine) selects between two modes on each call:
+//   - trial_start === true: initialize a new trial -- pick this trial's SNR (change_*
+//     blocks start at their block's own SNR), reset Petey to
+//     center, draw a random correct_ans ("left"/"right") and the signed step_mean_val/
+//     step_std_val consistent with it, and log the trial's design (step_mean_val,
+//     step_std_val, block_number, trial_number, correct_ans, switch_time) to the data file.
+//     No movement happens on this call; the participant sees Petey at center this frame.
+//   - trial_start === false: advance the walk by one step (move_pigeon), apply the
+//     changepoint SNR switch if this trial has just reached switch_time, and update the
+//     on-screen countdown/status bars. The participant's Left/Right response (checked in
+//     EachFrame below) can end the trial on any of these calls.
+// Either way, if the block's cumulative steps_count has now reached steps_max the block
+// itself ends (move_loop.finished = trial_loop.finished = true); task_runRoutineEnd still
+// gives a same-frame Left/Right response priority over that block-end.
 var _otr_kbd_response_allKeys;
-var rv;
 var switch_time;
 var steps_in_trial;
 var correct_ans;
-var endroutine;
 var task_runComponents;
 function task_runRoutineBegin(snapshot) {
   return async function () {
@@ -3410,22 +3557,10 @@ function task_runRoutineBegin(snapshot) {
     _pj = {};
     _pj_snippets(_pj);
     if ((trial_start === true)) {
-        if ((block_type === "mixed")) {
-            // step_mean_vals[0]/[1] are the low/high-SNR magnitudes (see the
-            // "fixed" push at block start); env_img mirrors the same
-            // low_env_img/high_env_img convention used for the changepoint
-            // switch below, so the SNR is visibly signaled on every trial,
-            // not just held at the block's own (otherwise-unused) tc_img_file.
-            step_mean = step_mean_vals[0];
-            step_std = step_std_vals[0];
-            env_img = low_env_img;
-            rv = rng_trial_type();
-            if ((rv > 0.5)) {
-                step_mean = step_mean_vals[1];
-                step_std = step_std_vals[1];
-                env_img = high_env_img;
-            }
-        }
+        // --- New-trial setup ---
+        // switch_time is only meaningful for change_low/change_high blocks (changepoint
+        // is false for fixed_* blocks, so the changepoint-switch code later in this
+        // routine never consults it there); it's left stale between blocks otherwise.
         if (_pj.in_es6("change_low", block_type)) {
             switch_time = low_switch_time;
         } else {
@@ -3435,17 +3570,12 @@ function task_runRoutineBegin(snapshot) {
         }
         otr_kbd_response.clearEvents();
         message_string = NO_CHOICE_STRING;
-        choice = "none";
         instruction_string = CHOICE_STRING;
         pigeon_flip = 0.1;
         pigeon_true_x = ORIGIN_X;
         pigeon_shown_x = pigeon_true_x;
         pigeon_steps = [pigeon_shown_x];
-        // Mixed block already set env_img above, per-trial, from the actual
-        // drawn SNR -- don't overwrite it with the block's static tc_img_file.
-        if (!(block_type === "mixed")) {
-            env_img = ("Resources/" + tc_img_file);
-        }
+        env_img = ("Resources/" + tc_img_file);
         if (_pj.in_es6("change_low", block_type)) {
             step_mean = step_mean_vals[0];
             step_std = step_std_vals[0];
@@ -3464,6 +3594,9 @@ function task_runRoutineBegin(snapshot) {
         coins_count += coins_paid_to_start_trial;
         steps_count += steps_taken_to_start_trial;
         steps_in_trial = 0;
+        // Draw this trial's ground-truth direction uniformly and sign step_mean_val to
+        // match: correct_ans records which side Petey is actually biased toward, and the
+        // participant's response is scored against it in task_runRoutineEnd.
         if ((util.randint(0, 2) === 1)) {
             correct_ans = "right";
             step_mean_val = Math.abs(step_mean);
@@ -3485,19 +3618,14 @@ function task_runRoutineBegin(snapshot) {
             psychoJS.experiment.addData("switch_time", switch_time);
         }
         trial_start = false;
-        if ((task_objective === "steps")) {
-            steps_text = (steps_max - steps_count).toString();
-        } else {
-            if ((task_objective === "score")) {
-                steps_text = steps_count.toString();
-            }
-        }
+        steps_text = (steps_max - steps_count).toString();
         coins_text = coins_count.toString();
         if (changepoint) {
             env_text = (switch_time - steps_in_trial).toString();
         }
-        update_status(false, false, false, changepoint, task_objective);
+        update_status(false, false, false, changepoint);
     } else {
+        // --- One animation step of an in-progress trial ---
         steps_count += 1;
         steps_in_trial += 1;
         if (((changepoint === true) && (steps_in_trial < switch_time))) {
@@ -3505,13 +3633,7 @@ function task_runRoutineBegin(snapshot) {
         } else {
             env_text = "";
         }
-        if ((task_objective === "steps")) {
-            steps_text = (steps_max - steps_count).toString();
-        } else {
-            if ((task_objective === "score")) {
-                steps_text = steps_count.toString();
-            }
-        }
+        steps_text = (steps_max - steps_count).toString();
         if (((changepoint === true) && (switch_occurred === false))) {
             if (_pj.in_es6("high", block_type)) {
                 if ((steps_in_trial === high_switch_time)) {
@@ -3539,16 +3661,23 @@ function task_runRoutineBegin(snapshot) {
         }
         move_pigeon(step_mean_val, step_std_val);
         pigeon_steps.push(pigeon_shown_x);
-        update_status(true, false, true, changepoint, task_objective);
+        update_status(true, false, true, changepoint);
     }
+    // Block-level budget check: steps_count is cumulative across every trial in the block
+    // (bumped by move_pigeon steps, steps_taken_to_start_trial, and steps_lost_per_error),
+    // so this fires once, on whichever call first pushes it to/past steps_max. Ending the
+    // block here (move_loop.finished/trial_loop.finished = true) takes effect in
+    // task_runRoutineEnd, which still gives priority to a Left/Right response captured by
+    // this same call's EachFrame over the block having ended (see the comment there).
     if ((steps_count >= steps_max)) {
-        endroutine = true;
         move_loop.finished = true;
         trial_loop.finished = true;
         if (_pj.in_es6("fixed_low", block_type)) {
             let rt_trimmed = trim_warmup_trials(RT_low);
             low_switch_time = calculate_median(rt_trimmed);
-            let exclusion_reason = check_rt_extremity(rt_trimmed);
+            let low_total_attempted = RT_low.length + low_timeout_count;
+            let low_timeout_fraction = low_total_attempted > 0 ? (low_timeout_count / low_total_attempted) : 0;
+            let exclusion_reason = check_rt_extremity(rt_trimmed, low_timeout_fraction);
             if (exclusion_reason !== null) {
                 should_exclude_participant = true;
                 exclusion_message = (exclusion_reason === "too_fast") ? RT_TOO_FAST_MESSAGE : RT_TOO_SLOW_MESSAGE;
@@ -3558,7 +3687,9 @@ function task_runRoutineBegin(snapshot) {
             if (_pj.in_es6("fixed_high", block_type)) {
                 let rt_trimmed = trim_warmup_trials(RT_high);
                 high_switch_time = calculate_median(rt_trimmed);
-                let exclusion_reason = check_rt_extremity(rt_trimmed);
+                let high_total_attempted = RT_high.length + high_timeout_count;
+                let high_timeout_fraction = high_total_attempted > 0 ? (high_timeout_count / high_total_attempted) : 0;
+                let exclusion_reason = check_rt_extremity(rt_trimmed, high_timeout_fraction);
                 if (exclusion_reason !== null) {
                     should_exclude_participant = true;
                     exclusion_message = (exclusion_reason === "too_fast") ? RT_TOO_FAST_MESSAGE : RT_TOO_SLOW_MESSAGE;
@@ -3998,59 +4129,80 @@ function task_runRoutineEnd(snapshot) {
     }
     _pj = {};
     _pj_snippets(_pj);
-    if ((trial_loop.finished === true)) {
-        if ((task_objective === "steps")) {
-            steps_count = steps_max;
+    // FIX: a genuine response takes priority over the block-budget end. If the participant
+    // pressed Left/Right on this exact frame, score and log it as a real trial even if the
+    // block's step budget was *also* exhausted on this same step (trial_loop.finished may
+    // already be true -- see the block-budget check in Begin Routine above). Previously this
+    // branched on trial_loop.finished first, which silently discarded that response (always
+    // recorded as choice "none") whenever it happened to coincide with the block ending.
+    if (otr_kbd_response.keys) {
+        // otr_kbd_response.keys is only "left" or "right" (see the keyList in EachFrame
+        // above); in_es6(correct_ans, otr_kbd_response.keys) is a substring/membership
+        // check that reduces to correct_ans === otr_kbd_response.keys for this keyList.
+        if (_pj.in_es6(correct_ans, otr_kbd_response.keys)) {
+            coins_count += coins_gained_per_correct;
+            set_trial_end_string(CORRECT_STRING);
+            update_status(false, true, false, _pj.in_es6("change", block_type));
+        } else {
+            coins_count -= coins_lost_per_error;
+            steps_count += steps_lost_per_error;
+            set_trial_end_string(ERROR_STRING);
         }
         psychoJS.experiment.addData("pigeon_steps", pigeon_steps);
         psychoJS.experiment.addData("coins_count", coins_count);
         psychoJS.experiment.addData("steps_count", steps_count);
-        psychoJS.experiment.addData("choice", "none");
-        set_block_end_string();
-        psychoJS.experiment.addData("bonus", bonus_count);
-    } else {
-        if (otr_kbd_response.keys) {
-            if (_pj.in_es6(correct_ans, otr_kbd_response.keys)) {
-                coins_count += coins_gained_per_correct;
-                set_trial_end_string(CORRECT_STRING);
-                if (((task_objective === "steps") || ((task_objective === "score") && (coins_count < coins_max)))) {
-                    update_status(false, true, false, _pj.in_es6("change", block_type), (task_objective === "steps"));
-                }
-            } else {
-                coins_count -= coins_lost_per_error;
-                steps_count += steps_lost_per_error;
-                set_trial_end_string(ERROR_STRING);
+        psychoJS.experiment.addData("choice", otr_kbd_response.keys);
+        update_status(false, true, true, changepoint);
+        otr_kbd_response.clearEvents();
+        if (_pj.in_es6("fixed_high", block_type)) {
+            RT_high.push(pigeon_steps.length);
+        } else {
+            if (_pj.in_es6("fixed_low", block_type)) {
+                RT_low.push(pigeon_steps.length);
             }
+        }
+        trial_number += 1;
+        move_loop.finished = true;
+    } else if (trial_loop.finished === true) {
+        // Block budget ran out on this step with no response captured this frame.
+        steps_count = steps_max;
+        psychoJS.experiment.addData("pigeon_steps", pigeon_steps);
+        psychoJS.experiment.addData("coins_count", coins_count);
+        psychoJS.experiment.addData("steps_count", steps_count);
+        psychoJS.experiment.addData("choice", "none");
+    } else {
+        // No key this frame: time out the trial once move_loop's own repeat counter
+        // (0-indexed) reaches STEPS_MAX_PER_TRIAL - 1, i.e. after STEPS_MAX_PER_TRIAL
+        // task_run calls for this trial (the first of which was the trial_start === true
+        // setup call that didn't move Petey, so this is STEPS_MAX_PER_TRIAL - 1 actual
+        // movement steps). No response is recorded either way.
+        if ((move_loop.thisRepN === (STEPS_MAX_PER_TRIAL - 1))) {
+            move_loop.finished = true;
+            set_trial_end_string(NO_CHOICE_STRING);
+            trial_number += 1;
             psychoJS.experiment.addData("pigeon_steps", pigeon_steps);
             psychoJS.experiment.addData("coins_count", coins_count);
             psychoJS.experiment.addData("steps_count", steps_count);
-            psychoJS.experiment.addData("choice", otr_kbd_response.keys);
-            if (((task_objective === "steps") || ((task_objective === "score") && (coins_count < coins_max)))) {
-                update_status(false, true, true, changepoint, task_objective);
-                otr_kbd_response.clearEvents();
-                if (_pj.in_es6("fixed_high", block_type)) {
-                    RT_high.push(pigeon_steps.length);
-                } else {
-                    if (_pj.in_es6("fixed_low", block_type)) {
-                        RT_low.push(pigeon_steps.length);
-                    }
+            psychoJS.experiment.addData("choice", "none");
+            // Tracked separately from RT_low/RT_high (which only ever hold responded
+            // trials' RTs) so check_rt_extremity can see the real per-trial timeout rate.
+            if (_pj.in_es6("fixed_high", block_type)) {
+                high_timeout_count += 1;
+            } else {
+                if (_pj.in_es6("fixed_low", block_type)) {
+                    low_timeout_count += 1;
                 }
-                trial_number += 1;
-                move_loop.finished = true;
-            }
-        } else {
-            if ((move_loop.thisRepN === (STEPS_MAX_PER_TRIAL - 1))) {
-                move_loop.finished = true;
-                set_trial_end_string(NO_CHOICE_STRING);
-                trial_number += 1;
-                psychoJS.experiment.addData("pigeon_steps", pigeon_steps);
-                psychoJS.experiment.addData("coins_count", coins_count);
-                psychoJS.experiment.addData("steps_count", steps_count);
-                psychoJS.experiment.addData("choice", "none");
             }
         }
     }
-    
+    // Block-end bookkeeping runs regardless of which branch above fired, and after any
+    // response this frame has already been scored, so set_block_end_string's coins_count
+    // check reflects this trial's outcome too.
+    if (trial_loop.finished === true) {
+        set_block_end_string();
+        psychoJS.experiment.addData("bonus", bonus_count);
+    }
+
     // the Routine "task_run" was not non-slip safe, so reset the non-slip timer
     routineTimer.reset();
     
@@ -4063,6 +4215,10 @@ function task_runRoutineEnd(snapshot) {
 }
 
 
+// ROUTINE "final_message" -> "show_final_message": runs once, after experiment_loop ends
+// (either normally, or early via experiment_loop.finished = true when the RT-extremity
+// exclusion check in otr_code_update fires). Picks the closing message: the RT-extremity
+// exclusion message if should_exclude_participant, otherwise a generic completion message.
 var final_messageComponents;
 function final_messageRoutineBegin(snapshot) {
   return async function () {
@@ -4142,6 +4298,9 @@ function final_messageRoutineEnd(snapshot) {
 }
 
 
+// ROUTINE "show_final_message": the closing screen, waits (from t=0.5s) for a
+// space/arrow keypress before quitting. Displays the message set by final_message plus a
+// final snapshot of the coins/steps status bars from whatever state they were left in.
 var _sfm_kbd_continue_allKeys;
 var show_final_messageComponents;
 function show_final_messageRoutineBegin(snapshot) {
@@ -4158,8 +4317,11 @@ function show_final_messageRoutineBegin(snapshot) {
     sfm_kbd_continue.rt = undefined;
     _sfm_kbd_continue_allKeys = [];
     // Run 'Begin Routine' code from sfm_code_update
-    sm_kbd_continue.clearEvents();
-    
+    // FIX: this used to clear sm_kbd_continue (show_message's keyboard, unused by this
+    // routine) instead of sfm_kbd_continue (this routine's own keyboard, pushed into
+    // show_final_messageComponents just below) -- a copy/paste leftover from sm_code_update.
+    sfm_kbd_continue.clearEvents();
+
     sfm_text_message.setText(message_string);
     sfm_text_steps_properties.setText(steps_string);
     sfm_text_steps.setText((steps_max - steps_count));
@@ -4473,8 +4635,10 @@ function show_final_messageRoutineEnd(snapshot) {
     }
     sfm_kbd_continue.stop();
     // Run 'End Routine' code from sfm_code_update
+    // Same bookkeeping as show_message's End Routine, kept for consistency; inert here since
+    // this is the last routine in the experiment (quitPsychoJS runs next).
     trial_start = true;
-    
+
     // the Routine "show_final_message" was not non-slip safe, so reset the non-slip timer
     routineTimer.reset();
     

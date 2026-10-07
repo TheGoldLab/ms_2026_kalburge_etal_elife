@@ -43,7 +43,7 @@ external directory outside the repo. Processed intermediates remain checked into
 | `scripts/` | Setup scripts (`unpack_data.sh`) |
 | `matlab/` | The original MATLAB analysis pipeline this Python package is translated from — `Figure*.m` (per-figure scripts) and `getPigeon_*.m`/`makePigeon_*.m` (the underlying data-loading, bound-inference, and summary functions Python's `pigeon/data.py` ports), plus a few reference `.mat` outputs from that pipeline (`boundSummaries_wCP.mat`, `boundBiasCorrectionMXSC.mat`) kept for cross-checking against the Python port |
 | `pilot/` | Early pilot task code and analysis, predating the current Prolific data collection (`Task_PigeonPilot/`, `Analysis_PigeonPilot/`) |
-| `task/` | The deployed jsPsych/Pavlovia task code participants actually ran (`PigeonTask.js`, `index.html`, `Resources/`) — see `task/readme.md` for local-run instructions |
+| `task/` | The deployed jsPsych/Pavlovia task code participants actually ran (`PigeonTask.js`, `index.html`, `Resources/`) — see `task/MXSC/README.md` for local-run and Prolific-deployment instructions |
 
 3. **Run preprocessing notebooks** (must run before Figure notebooks):
    - `notebooks/Make_biasCorrection.ipynb` — generates `data/processed/boundBiasCorrection.mat`
