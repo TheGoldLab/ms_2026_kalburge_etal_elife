@@ -90,7 +90,8 @@ def _load_mxsc_cp_methods(path=MXSC_CP_METHOD_FILE):
 
 def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
                    combine_snr=True, correct_bias=BIAS_CORRECTION_FILE,
-                   max_ndt=5, peak_step_bound=True):
+                   max_ndt=5, peak_step_bound=True,
+                   exclude_switched_trials_from_ndt=False):
     """
     Load and return a DataFrame of trial data.
     Translated from getPigeon_dataTable.m
@@ -103,7 +104,15 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
         'MX' (e.g. 'MX', 'MXSC') is treated as an online mixed-SNR task for
         column selection and bound computation; any task_type containing 'SC'
         (e.g. 'MXSC') additionally gets a per-trial change_point column
-        computed from blocks 1/2 (pre-change) and 4/5 (post-change).
+        computed from canonical blocks 1/2 (pre-change) and 3/4 (post-change).
+        Two MXSC conditions-file layouts have been used across data
+        collection: a legacy 5-block layout (1/2 fixed, 3 an unused mixed-SNR
+        block, 4/5 the change-point blocks) and the current 4-block layout
+        (1/2 fixed, 3/4 the change-point blocks, block 3 of the old layout
+        removed). block_index is remapped onto the current numbering for
+        legacy files (detected by the absence of a switch_time column) so
+        both eras share one canonical block_index -- see the remapping note
+        where block_index is built, below.
         The 'CP' (change-point) task is not yet implemented in Python;
         use the MATLAB pipeline to generate pre-computed summaries.
         'PD' (predefined bound): the subject chooses the bound before the
@@ -127,6 +136,17 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
     peak_step_bound : bool
         If True (default), apply the peak-step bound correction (a Python-only
         enhancement not present in getPigeon_bounds.m) -- see get_bounds.
+    exclude_switched_trials_from_ndt : bool
+        MXSC ('SC' in task_type) only; no effect otherwise. If True, the
+        lowest-SNR trial pool get_bounds' NDT search draws on (see get_bounds'
+        `change_point` parameter) excludes changepoint trials whose RT
+        exceeds their own change_point -- these are labeled with their
+        pre-switch snr but actually ran into the noisier, bigger-step
+        post-switch regime before the response, which dilutes/biases the
+        congruence curve the NDT search relies on. Default False (matches
+        prior behavior, and every non-MXSC caller) -- see
+        notebooks/Test_NDT.ipynb for the contamination this addresses and
+        notebooks/Figure06_cpSummary.ipynb for its effect on the CP results.
 
     Returns
     -------
@@ -193,9 +213,25 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
                 tmp = tmp[cols].copy()
 
         n_trials = len(tmp)
+        block_index = tmp["block_number"].to_numpy(dtype=float)
+        if is_sc and "switch_time" not in tmp.columns:
+            # Legacy MXSC conditions-file layout (pre-dates both switch_time
+            # recording and the removal of the middle block): raw blocks were
+            # 1=fixed-low, 2=fixed-high, 3=a mixed-SNR block unrelated to the
+            # change-point analysis and unused by any current code, 4=LowHigh
+            # CP, 5=HighLow CP. The current layout (has switch_time) is
+            # 1=fixed-low, 2=fixed-high, 3=LowHigh CP, 4=HighLow CP. Remap the
+            # legacy numbering onto the current one -- 4->3, 5->4 -- so both
+            # eras share one canonical block_index and downstream code
+            # (get_bound_summaries_wcp, this function's lh_block/hl_block
+            # below) doesn't need to know which era a given file is from.
+            # Legacy raw block 3 is pushed to -1 (out of the 1-4 canonical
+            # range) rather than left at 3, so it can never silently alias
+            # onto the current layout's LowHigh-CP block.
+            block_index = pd.Series(block_index).replace({4: 3, 5: 4, 3: -1}).to_numpy(dtype=float)
         rows = {
             "subject_index": np.full(n_trials, subject_index),
-            "block_index": tmp["block_number"].to_numpy(dtype=float),
+            "block_index": block_index,
             "trial_number": tmp["trial_number"].to_numpy(dtype=float),
             "bound": np.full(n_trials, np.nan),
             "abs_bound": np.full(n_trials, np.nan),
@@ -247,36 +283,27 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
                     sign = 1.0 if rows["choice"][tt] == 1.0 else -1.0
                     rows["bound"][tt] = sign * float(tmp["predefined_bound"].iloc[tt])
 
-        # Compute bounds, DT, RT, congruences for online tasks
-        if is_ol_or_mx:
-            bounds, dts, rts, congruence, rt_cutoffs = get_bounds(
-                rows["steps"], rows["choice"],
-                snr=np.abs(rows["snr"]),
-                block_ids=rows["block_index"],
-                ndt=None,
-                max_ndt=max_ndt,
-                peak_step_bound=peak_step_bound,
-            )
-            rows["bound"]      = bounds
-            rows["DT"]         = dts
-            rows["RT"]         = rts
-            rows["congruence"] = [congruence] * n_trials
-            rows["rt_cutoff"]  = rt_cutoffs
-        elif task_type == "PD":
-            # No NDT to subtract -- the subject already knows the bound, so
-            # every step taken is deliberation time.
-            rows["DT"] = rows["RT"].copy()
-
-        rows["abs_bound"] = np.abs(rows["bound"])
-
-        # Change-point tasks (e.g. 'MXSC'): blocks 1/2 are the pre-change
-        # low/high-SNR blocks, blocks 4/5 the post-change low-to-high (LH) and
-        # high-to-low (HL) blocks.
+        # Change-point tasks (e.g. 'MXSC'): canonical blocks 1/2 are the
+        # pre-change low/high-SNR blocks, 3/4 the post-change low-to-high (LH)
+        # and high-to-low (HL) blocks (block_index above is already remapped
+        # onto this canonical numbering for legacy-layout files).
+        #
+        # Computed before the get_bounds call below (rather than after, as in
+        # the original translation) so that change_point can be passed into
+        # it -- see get_bounds' `change_point` parameter and
+        # exclude_switched_trials_from_ndt above. This only needs RT, not any
+        # NDT-derived quantity, so a cheap local RT (steps taken, ignoring
+        # NaN padding) stands in for get_bounds' own `rts` output, which
+        # doesn't exist yet at this point.
         if is_sc:
             block_idx = rows["block_index"]
-            lh_block = block_idx == 4
-            hl_block = block_idx == 5
+            lh_block = block_idx == 3
+            hl_block = block_idx == 4
             change_point = np.zeros(n_trials)
+            raw_rt = np.array(
+                [len(s[np.isfinite(s)]) if s is not None else 0 for s in rows["steps"]],
+                dtype=float,
+            )
 
             if "switch_time" in tmp.columns:
                 # Current task code: the changepoint step is recorded
@@ -290,14 +317,30 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
                 # version.
                 st = pd.to_numeric(tmp["switch_time"], errors="coerce").to_numpy(dtype=float)
                 change_point = np.where(lh_block | hl_block, st, 0.0)
+            elif not lh_block.any() and not hl_block.any():
+                # No switch_time column AND no LH/HL trials at all: this is
+                # not a legacy-format file that completed the task under an
+                # older CP-timing formula, it's a modern session that was
+                # abandoned before reaching a change_low/change_high block
+                # (e.g. dropped out partway through block 1) -- switch_time
+                # is only ever logged inside those blocks (see
+                # otr_code_update "Begin Routine" in task/MXSC/PigeonTask.js),
+                # so PsychoPy never created the column for a session that
+                # never got there. There's no changepoint to derive (no LH/HL
+                # rows to derive it from), so change_point stays all-zero
+                # (no-change data) and this subject is naturally excluded
+                # downstream (nonfinite pre-/post-CP bound) without needing
+                # an mxsc_cp_method.txt entry.
+                pass
             else:
-                # Older data predates the switch_time column: fall back to
-                # recomputing the changepoint from RTs, using whichever
-                # formula that subject's task-code version actually used
-                # online (see _load_mxsc_cp_methods): 'mean' ->
-                # round(mean(RT)) (matches matlab/getPigeon_dataTable_MXSC.m);
-                # 'median' -> unrounded median(RT) (matches the pre-fix
-                # calculate_median() in task/MXSC/PigeonTask.js).
+                # Older data predates the switch_time column but does have
+                # LH/HL trials: fall back to recomputing the changepoint from
+                # RTs, using whichever formula that subject's task-code
+                # version actually used online (see _load_mxsc_cp_methods):
+                # 'mean' -> round(mean(RT)) (matches
+                # matlab/getPigeon_dataTable_MXSC.m); 'median' -> unrounded
+                # median(RT) (matches the pre-fix calculate_median() in
+                # task/MXSC/PigeonTask.js).
                 fname = os.path.basename(fpath)
                 if fname not in cp_methods:
                     raise KeyError(
@@ -308,7 +351,7 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
                 cp_func = (lambda x: round(np.nanmean(x))) if cp_method == "mean" \
                     else np.nanmedian
 
-                rt = rows["RT"]
+                rt = raw_rt
                 l_block = block_idx == 1
                 h_block = block_idx == 2
                 # 'median' subjects with an even-length fixed block get a
@@ -330,8 +373,32 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
 
             rows["change_point"] = change_point
 
-        all_tables.append(pd.DataFrame(rows))
+        # Compute bounds, DT, RT, congruences for online tasks
+        if is_ol_or_mx:
+            bounds, dts, rts, congruence, rt_cutoffs = get_bounds(
+                rows["steps"], rows["choice"],
+                snr=np.abs(rows["snr"]),
+                block_ids=rows["block_index"],
+                ndt=None,
+                max_ndt=max_ndt,
+                peak_step_bound=peak_step_bound,
+                change_point=(rows["change_point"]
+                              if is_sc and exclude_switched_trials_from_ndt else None),
+            )
+            rows["bound"]      = bounds
+            rows["DT"]         = dts
+            rows["RT"]         = rts
+            rows["congruence"] = [congruence] * n_trials
+            rows["rt_cutoff"]  = rt_cutoffs
+        elif task_type == "PD":
+            # No NDT to subtract -- the subject already knows the bound, so
+            # every step taken is deliberation time.
+            rows["DT"] = rows["RT"].copy()
 
+        rows["abs_bound"] = np.abs(rows["bound"])
+
+        all_tables.append(pd.DataFrame(rows))
+        
     data_table = pd.concat(all_tables, ignore_index=True)
 
     # Flag trials below the per-(subject, block, SNR) RT reliability cutoff.
@@ -416,7 +483,7 @@ def _compute_rt_cutoff(bound_matrix, choices_pm, rts, threshold=0.65, min_trials
 
 def get_bounds(steps_list, choices, min_rt=1, snr=None,
                block_ids=None, rt_cutoff_threshold=0.65, ndt=2,
-               max_ndt=5, peak_step_bound=True):
+               max_ndt=5, peak_step_bound=True, change_point=None):
     """
     Compute bounds, decision times, response times, and congruences.
     Translated from getPigeon_bounds.m
@@ -453,6 +520,19 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
         earlier, outermost of the two crossing steps (furthest from centre).
         This is a Python-only addition not present in getPigeon_bounds.m at
         all; applied uniformly to every task type (MX/OL/PD/MXSC).
+    change_point : array-like or None
+        Per-trial changepoint step (switch_time), 0/NaN for non-changepoint
+        trials -- as in `data_table["change_point"]`. Only used (when
+        `ndt=None`) to exclude "contaminated" trials from the lowest-SNR NDT
+        pool: a changepoint trial whose RT exceeds its own change_point
+        actually crossed into the other (noisier, bigger-step) SNR regime
+        before the response, even though it is still labeled with its
+        pre-switch `snr`. Left in, these trials dilute/bias the low-SNR
+        congruence curve the NDT search relies on (see notebooks/Test_NDT.ipynb
+        Part 2 for why that curve's shape is SNR-dependent in the first
+        place). Has no effect when `ndt` is an explicit integer, or when
+        `change_point` is None (default -- matches every non-changepoint
+        caller, which has nothing to pass here).
 
     NDT estimation (when ndt=None)
     -------------------------------
@@ -551,6 +631,14 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
         # regardless of SNR -- see "NDT estimation" in the docstring.
         low_snr_val = unique_snrs.min() if n_snrs > 0 else 0.0
         ls = np.isclose(snr, low_snr_val)
+        if change_point is not None:
+            change_point = np.asarray(change_point, dtype=float)
+            # A changepoint trial is labeled with its pre-switch snr even if
+            # it ran long enough to cross into the post-switch regime -- drop
+            # those "contaminated" trials from the low-SNR NDT pool (see the
+            # `change_point` docstring entry above).
+            switched = (change_point > 0) & (rts > change_point)
+            ls = ls & ~switched
         low_snr_cong = np.full(max_ndt, np.nan)
         for ii in range(1, min(4, max_ndt)):
             lc = ls & (bound_matrix[:, ii] != 0)
@@ -966,7 +1054,7 @@ def get_bound_summary(data_table, correct_only=False, blocks="all",
     split_by_snr : bool
         If True, summarize separately per unique |snr| value -- except for
         change-point blocks (nonzero change_point column), which split on
-        pre-/post-changepoint (DT vs change_point) instead: real
+        pre-/post-changepoint (RT vs change_point) instead: real
         change-point data is staircase-calibrated per subject, so there is
         no small shared set of |snr| values to group by, but grouping on
         the pre-/post-change label still collapses all subjects onto the
@@ -1023,9 +1111,21 @@ def get_bound_summary(data_table, correct_only=False, blocks="all",
             # i.e. the block's recorded starting condition; 1 = post-change,
             # the condition it switched to), regardless of each subject's
             # actual |snr| magnitude.
-            dt_arr = data_table["DT"].to_numpy()
+            #
+            # Compare against RT, not DT: change_point/switch_time is the
+            # raw within-trial step count the online task compared against
+            # (steps_in_trial === switch_time in task/MXSC/PigeonTask.js),
+            # which is the same scale as RT (RT_low/RT_high there are pushed
+            # as pigeon_steps.length, i.e. the trial's total step count).
+            # DT = RT - NDT is always <= RT, so using DT here systematically
+            # undercounts post-change trials -- any trial whose RT landed in
+            # (switch_time, switch_time + NDT] would be wrongly bucketed as
+            # pre-change, and for some subjects that shrinks the post-change
+            # bucket to 0 (e.g. their whole DT distribution can sit at or
+            # below switch_time while their RT distribution does not).
+            rt_arr = data_table["RT"].to_numpy()
             cp_arr = data_table["change_point"].to_numpy()
-            post_change = (cp_arr > 0) & (dt_arr > cp_arr)
+            post_change = (cp_arr > 0) & (rt_arr > cp_arr)
             abs_snr = post_change.astype(float)
         else:
             abs_snr = data_table["snr"].abs().to_numpy()
@@ -1157,7 +1257,7 @@ def get_bound_summaries_wcp(data_table_mxsc: pd.DataFrame, options: Any = None) 
     ----------
     data_table_mxsc : pandas.DataFrame
         Output of ``get_data_table(task_type="MXSC")``. Must contain columns
-        subject_index, block_index, DT, correct, change_point.
+        subject_index, block_index, DT, RT, correct, change_point.
     options : mapping or object, optional
         Supports the same fields as the MATLAB `arguments` block (renamed to
         snake_case here): min_n, min_dt, max_dt, num_sims, block, show_rr,
@@ -1189,7 +1289,9 @@ def get_bound_summaries_wcp(data_table_mxsc: pd.DataFrame, options: Any = None) 
 
     task_types = ["MX-LH", "MX-HL", "Low", "High"]
     titles = ["LowHigh", "HighLow", "Low", "High"]
-    blocks = [4, 5, 1, 2]
+    # Canonical block numbering (see get_data_table's block_index remapping):
+    # 1/2 = fixed-low/fixed-high, 3/4 = LowHigh/HighLow change-point blocks.
+    blocks = [3, 4, 1, 2]
     cond_dict = dict(zip(task_types, blocks))
 
     bound_summaries: dict[str, Any] = {}
@@ -1209,7 +1311,7 @@ def get_bound_summaries_wcp(data_table_mxsc: pd.DataFrame, options: Any = None) 
         fixed_table = data_table_mxsc.loc[lf & ldt].reset_index(drop=True)
 
         # Bound summary, collapsed across all RTs. get_bound_summary splits
-        # change-point blocks on pre-/post-changepoint (DT vs change_point)
+        # change-point blocks on pre-/post-changepoint (RT vs change_point)
         # rather than literal |snr|, giving exactly 2 columns per subject:
         # [0] = pre-change bound, [1] = post-change bound.
         # subject_indices=subject_ids pins every call to the same full
