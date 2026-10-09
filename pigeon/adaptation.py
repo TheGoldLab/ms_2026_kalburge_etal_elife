@@ -374,3 +374,33 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
 
     return dict(subjects=subjects, trial_nums=trial_nums, real_curves=real_curves,
                 sig_tau=sig_tau, taus=taus, censored=lcensored, good_tau=good_tau)
+
+
+def get_tau_exclusion_mask(data_table, good_tau):
+    """
+    Keep-mask that drops each subject's adaptation transient at the start of a block.
+
+    The convention used by Figure03S04 / Figure03S05 / Figure03S06 (their local
+    ``tau_exclusion_mask`` / ``make_tau_exclusion_mask``): for a subject with a
+    good tau fit in a block, trials with ``trial_number < ceil(tau)`` are
+    dropped; subjects without a good fit (ineligible, failed, or censored) keep
+    all their trials. Applied on top of the standard quality filters.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Trials with ``subject_index``, ``block_index`` and ``trial_number``.
+    good_tau : pd.DataFrame
+        ``get_adaptation_tau_fits(...)['good_tau']`` (index subjects, columns
+        blocks; NaN where there is no good fit).
+
+    Returns
+    -------
+    pd.Series of bool, same index as data_table (True = keep).
+    """
+    tau_long = good_tau.stack().rename("tau")
+    tau_long.index.names = ["subject_index", "block_index"]
+    key = pd.MultiIndex.from_arrays([data_table["subject_index"], data_table["block_index"]])
+    tau = tau_long.reindex(key).to_numpy()
+    drop = np.isfinite(tau) & (data_table["trial_number"].to_numpy() < np.ceil(np.nan_to_num(tau)))
+    return pd.Series(~drop, index=data_table.index)

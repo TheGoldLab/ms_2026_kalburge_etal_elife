@@ -1,24 +1,26 @@
-"""Fit the stopping model (pigeon.stopping) to the fixed blocks of OL, MX and MXSC.
+"""Fit the stopping model (pigeon.stopping) to the OL and MX blocks.
 
 Writes data/processed/stopping_fits_<variant>.pkl (one row per subject x
 condition, with a ``task`` column) for notebooks/Test_stoppingModel.ipynb.
 Fits take minutes per subject, so they run here rather than in the notebook.
 
-Conditions: OL by (block, SNR) cell (SNR was blocked, and get_data_table
-merges each pair of blocked-SNR blocks); MX by block (SNR mixed within a
-block); MXSC fixed blocks 1 (Low) and 2 (High). Trials: trial_number >= 10 and
-a recorded choice; exclusions are printed.
+Trials come from pigeon.stopping.get_stopping_model_trials: raw block
+numbering (OL blocks 1-6, each a single SNR; MX blocks 1-3, mixed SNR, the
+blocks combine_snr=True keeps), trial_number >= 10, a recorded choice, and the
+adaptation-tau exclusion used by the figure notebooks. Exclusions are printed.
 
 Run from the project root, detached:
 
     nohup uv run python scripts/run_stopping_fits.py [variant ...] > data/processed/stopping_fits.log 2>&1 &
 
 Variants (default: main):
-    main        time_course='shared', NDT {1, 2}, sensory noise free
-    flat        time_course='flat'
-    per_group   time_course='per_group'
-    ndt123      NDT {1, 2, 3}
-    no_noise    sensory_std fixed at 0
+    main            bound scale, CV and time course per block; guess, lapse,
+                    anticipation, sensory noise and NDT {1, 2} shared
+    shared_tc       time course shared across blocks
+    flat            no time course (constant bound)
+    per_block_rates guess, lapse and anticipation rates per block
+    ndt123          NDT {1, 2, 3}
+    no_noise        sensory_std fixed at 0
 """
 
 import sys
@@ -27,16 +29,15 @@ from pathlib import Path
 
 import pandas as pd
 
-from pigeon import get_data_table
-from pigeon.stopping import fit_stopping_models
+from pigeon.stopping import fit_stopping_models, get_stopping_model_trials
 
 OUT_DIR = Path("data/processed")
-MIN_TRIAL_NUMBER = 10
-DATASETS = {"OL": [1, 2, 3], "MX": [1, 2, 3], "MXSC": [1, 2]}
+DATASETS = {"OL": [1, 2, 3, 4, 5, 6], "MX": [1, 2, 3]}
 VARIANTS = {
     "main": {},
+    "shared_tc": {"time_course": "shared"},
     "flat": {"time_course": "flat"},
-    "per_group": {"time_course": "per_group"},
+    "per_block_rates": {"shared_params": ()},
     "ndt123": {"ndt_values": (1, 2, 3)},
     "no_noise": {"fixed": {"sensory_std": 0.0}},
 }
@@ -46,26 +47,8 @@ def log(msg):
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}", flush=True)
 
 
-def load_fixed_blocks(task, blocks):
-    """Selected fixed-block trials with a ``condition`` column; prints exclusions."""
-    d = get_data_table(task_type=task, correct_bias=None)
-    d = d[d.block_index.isin(blocks)]
-    l_early = d.trial_number < MIN_TRIAL_NUMBER
-    l_nochoice = d.choice.isna()
-    log(f"{task}: {len(d):,} trials in blocks {blocks}; excluded {l_early.sum():,} with trial_number < "
-        f"{MIN_TRIAL_NUMBER}, {(l_nochoice & ~l_early).sum():,} more with no choice; "
-        f"{d.subject_index.nunique()} subjects")
-    d = d[~l_early & ~l_nochoice].copy()
-    lev = d.snr.abs().round(3)
-    if task == "OL":
-        d["condition"] = [f"B{b:.0f} SNR {s:g}" for b, s in zip(d.block_index, lev)]
-    else:
-        d["condition"] = [f"B{b:.0f}" for b in d.block_index]
-    return d
-
-
 def main(variants):
-    tables = {task: load_fixed_blocks(task, blocks) for task, blocks in DATASETS.items()}
+    tables = {task: get_stopping_model_trials(task, blocks) for task, blocks in DATASETS.items()}
     for variant in variants:
         kwargs = VARIANTS[variant]
         parts = []

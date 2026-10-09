@@ -20,10 +20,11 @@ position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
    multiplier ``m`` is gamma-distributed with mean 1 and coefficient of
    variation ``bound_cv``. The time course ``theta(j)`` is
    ``bound_scale * h(j)``, where ``log h`` is piecewise linear in j through
-   ``knots`` (constant outside them) with ``h(knots[0]) = 1``; so
-   ``bound_scale`` is the mean bound at the first knot. ``h`` is shared by all
-   of a subject's groups (``time_course='shared'``), separate per group
-   (``'per_group'``), or flat (``'flat'``). On change-point trials, positions
+   ``knots`` (constant outside them) with ``h(anchor) = 1``; so
+   ``bound_scale`` is the mean bound at the anchor step (default 6, about the
+   median commit step, where the level is best determined). ``h`` is separate per
+   group (``time_course='per_group'``, the default), shared by all of a
+   subject's groups (``'shared'``), or flat (``'flat'``). On change-point trials, positions
    j >= change_point use ``bound_scale_post`` (if fit).
 3. **Sensory noise.** The subject sees ``y_j = x_j + e_j`` with independent
    ``e_j ~ N(0, sensory_std^2)``, and commits at the first j >= 1 with
@@ -64,12 +65,16 @@ probabilities and biases NDT and the bound upward.)
 Fitting
 -------
 ``fit_stopping_model`` maximizes the penalized likelihood over all trials of
-one subject with L-BFGS-B on transformed scales. Per group: ``bound_scale``,
-``bound_cv``, ``guess_rate``, ``lapse_rate``, ``anticipation_rate`` (and any
-``post_params``). Per subject: ``sensory_std``, the NDT probabilities, and the
-time-course knots. A weak penalty on adjacent differences of ``log h``
+one subject with L-BFGS-B on transformed scales. By default every bound
+parameter is per group (``bound_scale``, ``bound_cv``, the time-course knots,
+and any ``post_params``) and everything else is shared by the subject's
+groups (``guess_rate``, ``lapse_rate``, ``anticipation_rate``,
+``sensory_std``, the NDT probabilities); ``shared_params`` and
+``time_course`` change that. A penalty on adjacent differences of ``log h``
 (``smooth_penalty``; Gaussian prior SD ``1/sqrt(2 * smooth_penalty)`` on each
-log change) keeps poorly sampled late knots near their neighbors.
+log change, 0.5 by default) keeps the time course near flat unless the data
+say otherwise: with ~50-150 trials per block, an unpenalized per-block curve
+trades an extreme early bound against a steep collapse.
 
 Units: ``bound_scale`` and ``sensory_std`` are in position units on *raw*
 positions (no bias correction; the likelihood accounts for overshoot).
@@ -83,12 +88,14 @@ import scipy.optimize
 import scipy.special
 import scipy.stats
 
-from .data import WALL
+from .data import WALL, get_bounds, get_data_table
 
 NDT_VALUES = (1, 2)
-KNOTS = (1, 3, 6, 10, 16)
+KNOTS = (1, 6, 16)
+ANCHOR = 6   # knot where h = 1, so bound_scale is the mean bound there
 GROUP_PARAMS = ("bound_scale", "bound_cv", "guess_rate", "lapse_rate", "anticipation_rate")
 POST_PARAMS = ("bound_scale", "guess_rate")
+SHARED_PARAMS = ("guess_rate", "lapse_rate", "anticipation_rate")
 TIME_COURSES = ("flat", "shared", "per_group")
 
 # Optimizer limits on the transformed scales.
@@ -307,17 +314,22 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
 class _Layout:
     """Bookkeeping between the transformed parameter vector and named parameters."""
 
-    def __init__(self, n_groups, post_params, n_ndt, time_course, n_knots, fixed):
+    def __init__(self, n_groups, post_params, n_ndt, time_course, n_knots, fixed, shared_params=(), anchor_idx=0):
         self.n_groups, self.n_ndt, self.time_course = n_groups, n_ndt, time_course
         self.post_params = tuple(q for q in POST_PARAMS if q in post_params)
         self.fixed = dict(fixed or {})
+        self.shared = tuple(q for q in GROUP_PARAMS if q in shared_params)
         self.n_shapes = {"flat": 0, "shared": 1, "per_group": n_groups}[time_course]
         self.n_free_h = n_knots - 1
+        self.anchor_idx = anchor_idx
         spec = []   # (name, size, limits)
         G = n_groups
-        spec += [("bound_scale", G, _LOG_POS_LIMITS), ("bound_cv", G, _LOG_CV_LIMITS),
-                 ("guess_rate", G, _LOGIT_LIMITS), ("lapse_rate", G, _LOGIT_LIMITS),
-                 ("anticipation_rate", G, _LOGIT_LIMITS)]
+        size = lambda name: 1 if name in self.shared else G  # noqa: E731
+        spec += [("bound_scale", size("bound_scale"), _LOG_POS_LIMITS),
+                 ("bound_cv", size("bound_cv"), _LOG_CV_LIMITS),
+                 ("guess_rate", size("guess_rate"), _LOGIT_LIMITS),
+                 ("lapse_rate", size("lapse_rate"), _LOGIT_LIMITS),
+                 ("anticipation_rate", size("anticipation_rate"), _LOGIT_LIMITS)]
         for name in self.post_params:
             spec.append((f"{name}_post", G, _LOGIT_LIMITS if name == "guess_rate" else _LOG_POS_LIMITS))
         spec.append(("sensory_std", 1, _LOG_SENSORY_LIMITS))
@@ -338,9 +350,9 @@ class _Layout:
             if name in self.fixed:
                 p[name] = np.broadcast_to(np.asarray(self.fixed[name], float), (self.n_groups,))
             elif name.startswith(("guess_rate", "lapse_rate", "anticipation_rate")):
-                p[name] = scipy.special.expit(out[name])
+                p[name] = np.broadcast_to(scipy.special.expit(out[name]), (self.n_groups,))
             else:
-                p[name] = np.exp(out[name])
+                p[name] = np.broadcast_to(np.exp(out[name]), (self.n_groups,))
         for name in POST_PARAMS:
             p.setdefault(f"{name}_post", p[name])
         p["sensory_std"] = (float(self.fixed["sensory_std"]) if "sensory_std" in self.fixed
@@ -349,7 +361,7 @@ class _Layout:
         p["ndt_probs"] = np.exp(logits - scipy.special.logsumexp(logits))
         free_h = out.get("log_h", np.zeros(0)).reshape(max(self.n_shapes, 1), -1) \
             if self.n_shapes else np.zeros((1, self.n_free_h))
-        p["log_h"] = np.hstack([np.zeros((free_h.shape[0], 1)), free_h])
+        p["log_h"] = np.insert(free_h, self.anchor_idx, 0.0, axis=1)
         return p
 
 
@@ -379,7 +391,7 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
         Natural-scale parameters: GROUP_PARAMS (scalar or one per group, in
         sorted group order), optional ``<name>_post``, ``sensory_std``,
         ``ndt_probs`` (one per ndt value), optional ``log_h`` (values at the
-        knots, first = 0; shape (len(knots),) or (n_groups, len(knots));
+        knots, 0 at the anchor; shape (len(knots),) or (n_groups, len(knots));
         default flat).
     group_col, knots, ndt_values, n_quad, wall
         See fit_stopping_model.
@@ -400,9 +412,9 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
     return float(-np.sum(np.log(np.maximum(lik, _MIN_LIK))))
 
 
-def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="shared",
-                       knots=KNOTS, ndt_values=NDT_VALUES, fixed=None, smooth_penalty=0.5,
-                       n_quad=24, wall=WALL, x0=None):
+def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="per_group",
+                       shared_params=SHARED_PARAMS, knots=KNOTS, ndt_values=NDT_VALUES, fixed=None,
+                       smooth_penalty=2.0, anchor=ANCHOR, n_quad=24, wall=WALL, x0=None):
     """
     Maximum-likelihood fit of the stopping model to one subject's trials.
 
@@ -418,7 +430,12 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     post_params : sequence of str
         Subset of POST_PARAMS with separate post-change-point values.
     time_course : {'flat', 'shared', 'per_group'}
-        Bound time course across steps (see module docstring).
+        Bound time course across steps (see module docstring). Default
+        'per_group': every bound parameter is separate per group.
+    shared_params : sequence of str
+        Subset of GROUP_PARAMS with one value shared by all groups. Default
+        SHARED_PARAMS (guess, lapse and anticipation rates): bound parameters
+        per group, everything else shared (sensory noise and NDT always are).
     knots : sequence of int
         Steps at which log h is free (the first is fixed at 0).
     ndt_values : sequence of int
@@ -427,7 +444,10 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         Parameters held fixed at natural-scale values, e.g.
         ``{'sensory_std': 0.0}`` (exact crossings) or ``{'guess_rate': 0.0}``.
     smooth_penalty : float
-        Weight on squared adjacent differences of log h (0 = none).
+        Weight on squared adjacent differences of log h (0 = none). Default 2
+        (prior SD 0.5 on each log change).
+    anchor : int
+        Knot at which h = 1 (bound_scale is the mean bound there).
     n_quad : int
         Quadrature nodes for the bound multiplier.
     wall : float
@@ -458,7 +478,10 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
 
     x, lens, choice_pm, group_values, group_idx, post_mask = _prepare(data_table, group_col)
     G = len(group_values)
-    lay = _Layout(G, post_params, len(ndt_values), time_course, len(knots), fixed)
+    if anchor not in knots:
+        raise ValueError(f"anchor {anchor} must be one of the knots {tuple(knots)}.")
+    lay = _Layout(G, post_params, len(ndt_values), time_course, len(knots), fixed, shared_params,
+                  anchor_idx=list(knots).index(anchor))
 
     if x0 is None:
         k = np.clip(lens - 2, 0, x.shape[1] - 1)
@@ -476,7 +499,7 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
             "ndt_logits": np.zeros(len(ndt_values) - 1),
             "log_h": np.zeros(lay.n_shapes * lay.n_free_h),
         }
-        x0 = np.concatenate([start[name] for name, _, _ in lay.spec])
+        x0 = np.concatenate([start[name][:size] for name, size, _ in lay.spec])
 
     def objective(theta):
         p = lay.unpack(theta)
@@ -526,12 +549,12 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     generative_mean, generative_std : float
         Step mean magnitude (sign drawn 50/50 per trial) and SD.
     bound_scale, bound_cv : float
-        Mean bound at the first knot (position units) and the coefficient of
+        Mean bound at the anchor knot (position units) and the coefficient of
         variation of the per-trial bound multiplier.
     guess_rate, lapse_rate, anticipation_rate, sensory_std : float
         See module docstring.
     log_h : sequence or None
-        log h at the knots (first should be 0); None = flat.
+        log h at the knots (0 at the anchor knot); None = flat.
     knots : sequence of int
     ndt_values, ndt_probs : sequences
         NDT support and probabilities.
@@ -640,7 +663,7 @@ def fit_stopping_models(data_table, max_workers=None, **kwargs):
         Processes for the per-subject fits (None = all cores; 1 = no pool).
     **kwargs
         Passed to fit_stopping_model (group_col, post_params, time_course,
-        knots, ndt_values, fixed, smooth_penalty, n_quad, wall).
+        shared_params, knots, anchor, ndt_values, fixed, smooth_penalty, n_quad, wall).
 
     Returns
     -------
@@ -732,3 +755,102 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
         sim["rep"] = np.repeat(np.arange(num_reps), len(cell))
         out.append(sim)
     return pd.concat(out, ignore_index=True)
+
+
+def infer_bounds_like_data(sim_table, max_ndt=5, peak_step_bound=True):
+    """
+    Run the real-data bound inference on simulated trials.
+
+    Calls ``get_bounds`` once per subject, with the same arguments
+    ``get_data_table`` uses for OL/MX/MXSC (NDT estimated by congruence,
+    per-block/SNR RT cutoffs), so simulated trials get ``bound``, ``DT``,
+    ``rt_below_cutoff`` and ``abs_bound`` exactly as real ones do. No bias
+    correction (apply ``apply_bias_corrections`` afterwards if needed).
+
+    Parameters
+    ----------
+    sim_table : pd.DataFrame
+        Output of simulate_stopping_data_table (``subject_index``, ``steps``,
+        ``choice``, ``snr``, ``block_index``; ``rep`` if present is treated as a
+        separate subject-session).
+    max_ndt, peak_step_bound
+        Passed to get_bounds (get_data_table's defaults).
+
+    Returns
+    -------
+    Copy of sim_table with ``bound``, ``abs_bound``, ``DT``, ``rt_cutoff`` and
+    ``rt_below_cutoff`` added.
+    """
+    out = sim_table.copy()
+    keys = ["subject_index", "rep"] if "rep" in out else ["subject_index"]
+    for col in ("bound", "DT", "rt_cutoff"):
+        out[col] = np.nan
+    for _, g in out.groupby(keys):
+        bounds, dts, rts, _, cutoffs = get_bounds(
+            list(g["steps"]), g["choice"].to_numpy(float), snr=np.abs(g["snr"].to_numpy(float)),
+            block_ids=g["block_index"].to_numpy(float), ndt=None, max_ndt=max_ndt,
+            peak_step_bound=peak_step_bound)
+        out.loc[g.index, "bound"] = bounds
+        out.loc[g.index, "DT"] = dts
+        out.loc[g.index, "rt_cutoff"] = cutoffs
+    out["abs_bound"] = out["bound"].abs()
+    out["rt_below_cutoff"] = out["RT"] < out["rt_cutoff"]
+    return out
+
+
+def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclusion=True, verbose=True):
+    """
+    Trials for stopping-model fits, following the paper's trial conventions.
+
+    Loads the raw block numbering (``combine_snr=False``; OL and MX each have
+    six blocks run in order 1-6), keeps ``trial_number >= min_trial_number`` and
+    trials with a recorded choice (trials without one ran out of the block's
+    step budget), and, if ``tau_exclusion``, drops each subject's adaptation
+    transient: trials with ``trial_number < ceil(tau)`` in blocks where the
+    subject has a good adaptation fit (``get_adaptation_tau_fits`` on the
+    standard bias-corrected table, as in Figure04_RRvsBound and
+    Figure03S04/S06). No DT cutoff, no wall-hit exclusion, and positions are
+    raw (no bias correction) for the model itself.
+
+    Parameters
+    ----------
+    task_type : str
+        'OL', 'MX' or 'MXSC'.
+    blocks : sequence of int
+        Raw block_index values to keep, in presentation order.
+    min_trial_number : int
+    tau_exclusion : bool
+        Apply the adaptation-transient exclusion.
+    verbose : bool
+        Print the number of trials excluded by each criterion.
+
+    Returns
+    -------
+    pd.DataFrame (get_data_table columns plus ``condition`` = 'B<block>' and
+    ``task``).
+    """
+    from .adaptation import get_adaptation_tau_fits, get_tau_exclusion_mask
+
+    blocks = list(blocks)
+    d = get_data_table(task_type=task_type, combine_snr=False, correct_bias=None)
+    d = d[d["block_index"].isin(blocks)]
+    l_early = d["trial_number"] < min_trial_number
+    l_nochoice = d["choice"].isna()
+    l_tau = pd.Series(False, index=d.index)
+    if tau_exclusion:
+        dc = get_data_table(task_type=task_type, combine_snr=False)
+        good_tau = get_adaptation_tau_fits(dc[dc["block_index"].isin(blocks)], blocks=blocks,
+                                           max_trial=40)["good_tau"]
+        l_tau = ~get_tau_exclusion_mask(d, good_tau)
+        if verbose:
+            print(f"{task_type}: subjects with a good adaptation tau fit, by block: "
+                  f"{good_tau.notna().sum().to_dict()}")
+    if verbose:
+        print(f"{task_type}: {len(d):,} trials in blocks {blocks}; excluded {l_early.sum():,} with "
+              f"trial_number < {min_trial_number}, {(l_tau & ~l_early).sum():,} more in the adaptation "
+              f"transient, {(l_nochoice & ~l_early & ~l_tau).sum():,} more with no choice; "
+              f"{d['subject_index'].nunique()} subjects")
+    d = d[~l_early & ~l_tau & ~l_nochoice].copy()
+    d["condition"] = [f"B{b:.0f}" for b in d["block_index"]]
+    d["task"] = task_type
+    return d

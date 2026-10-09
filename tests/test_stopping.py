@@ -10,7 +10,7 @@ from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, simul
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
             sensory_std=0.02)
 NDT_PROBS = (0.7, 0.3)
-COLLAPSE = np.array([0.0, -0.1, -0.3, -0.5, -0.7])
+COLLAPSE = np.array([0.3, 0.0, -0.4])   # log h at KNOTS (1, 6, 16); 0 at the anchor (step 6)
 
 
 def _sim(n, gm, seed, **kw):
@@ -32,7 +32,7 @@ def test_nll_is_lower_at_truth_than_perturbed():
     truth = {**TRUE, "ndt_probs": NDT_PROBS, "log_h": COLLAPSE}
     nll_true = stopping_model_nll(d, truth, group_col=None)
     for name, val in [("bound_scale", 0.28), ("bound_cv", 0.1), ("guess_rate", 0.1),
-                      ("sensory_std", 0.08), ("log_h", np.zeros(5))]:
+                      ("sensory_std", 0.08), ("log_h", np.zeros(3))]:
         assert stopping_model_nll(d, {**truth, name: val}, group_col=None) > nll_true
 
 
@@ -44,7 +44,7 @@ def test_zero_sensory_noise_is_exact_crossing():
 
 def test_fit_recovers_parameters_and_time_course():
     d = _sim(4000, 0.02, 3, log_h=COLLAPSE)
-    r = fit_stopping_model(d, group_col=None)
+    r = fit_stopping_model(d, group_col=None, smooth_penalty=0.0)
     p = r["params"].iloc[0]
     assert r["success"]
     assert abs(p["bound_scale"] - TRUE["bound_scale"]) < 0.02
@@ -53,7 +53,7 @@ def test_fit_recovers_parameters_and_time_course():
     assert abs(p["ndt_p1"] - NDT_PROBS[0]) < 0.06
     fitted = bound_time_course(p, KNOTS)
     true = TRUE["bound_scale"] * np.exp(COLLAPSE)
-    assert np.all(np.abs(fitted[:4] - true[:4]) < 0.02)   # knot 16 is sparsely sampled
+    assert np.all(np.abs(fitted - true) < 0.03)
 
 
 def test_fit_recovers_change_point_shift():
@@ -89,3 +89,14 @@ def test_fit_rejects_missing_choices():
     d.loc[0, "choice"] = np.nan
     with pytest.raises(ValueError, match="missing choice"):
         fit_stopping_model(d, group_col=None)
+
+
+def test_shared_and_per_block_parameters():
+    # Default: bound parameters per block, guess/lapse/anticipation shared.
+    d = pd.concat([_sim(400, 0.01, 10, bound_scale=0.25).assign(block_index=1),
+                   _sim(400, 0.03, 11, bound_scale=0.15).assign(block_index=2)], ignore_index=True)
+    r = fit_stopping_model(d, time_course="flat")
+    p = r["params"]
+    assert p["guess_rate"].nunique() == 1 and p["lapse_rate"].nunique() == 1
+    assert p["bound_scale"].nunique() == 2
+    assert r["n_params"] == 2 * 2 + 3 + 1 + 1   # scale, cv per block; 3 rates; noise; NDT

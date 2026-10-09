@@ -808,6 +808,55 @@ def get_bounds_from_dv(choices, rts, DV, max_ndt=5, rt_cutoff_threshold=0.65,
     return bounds, dts, rts, congruence, rt_cutoffs
 
 
+def get_crossing_diagnostics(data_table):
+    """
+    Per-trial incongruence and premature-crossing flags at the inferred crossing.
+
+    Same definitions as ``compute_basic_props`` in
+    notebooks/Figure03S03_boundTest.ipynb, which uses them to ask whether NDT
+    variability and sensory noise explain the data:
+
+    - **incongruent**: the sign of the basic midpoint bound
+      ``(steps[DT-1] + steps[DT]) / 2`` differs from the choice.
+    - **premature crossing**: some position before ``DT - 1`` was already at or
+      beyond the peak-step bound ``max(|steps[DT-1]|, |midpoint|)`` on the
+      bound's side.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        ``steps``, ``choice`` (0/1), ``DT`` and ``bound`` columns.
+
+    Returns
+    -------
+    pd.DataFrame with columns ``incongruent`` and ``premature_crossing`` (1.0 /
+    0.0, NaN where undefined: DT < 1, DT beyond the recorded steps, or a zero
+    midpoint), same index as data_table.
+    """
+    choices_pm = 2 * data_table["choice"].to_numpy(float) - 1
+    dts = data_table["DT"].to_numpy(float)
+    bounds = data_table["bound"].to_numpy(float)
+    incong = np.full(len(data_table), np.nan)
+    early = np.full(len(data_table), np.nan)
+    for ii, sc in enumerate(data_table["steps"]):
+        if sc is None or not np.isfinite(dts[ii]):
+            continue
+        sc = np.asarray(sc, float)
+        t = int(dts[ii])
+        if t < 1 or t >= len(sc) or not np.isfinite(sc[t]) or not np.isfinite(sc[t - 1]):
+            continue
+        midpoint = (sc[t - 1] + sc[t]) / 2
+        if midpoint == 0:
+            continue
+        incong[ii] = float(np.sign(midpoint) != choices_pm[ii])
+        peak_b = max(abs(sc[t - 1]), abs(midpoint))
+        if peak_b <= 0:
+            continue
+        sgn = np.sign(bounds[ii]) if np.isfinite(bounds[ii]) and bounds[ii] != 0 else np.sign(midpoint)
+        early[ii] = float(np.any(sc[:t - 1] * sgn >= peak_b)) if t >= 2 else 0.0
+    return pd.DataFrame({"incongruent": incong, "premature_crossing": early}, index=data_table.index)
+
+
 def get_good_trial_array(data_table, min_dt=2, min_trial_number=10,
                          block_index=None, apply_rt_cutoff=True):
     """
