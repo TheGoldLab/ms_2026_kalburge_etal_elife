@@ -472,3 +472,120 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
         "commit_type": ctype,
         "bound_pre": _gamma_ppf(u, bound_mean, bound_std),
     })
+
+
+def _fit_one_subject(args):
+    """Worker for fit_stopping_models (module level so it can run in a process pool)."""
+    subject, table, kwargs = args
+    try:
+        fit = fit_stopping_model(table, **kwargs)
+    except Exception as err:  # report per-subject failures instead of losing the whole run
+        return subject, None, repr(err)
+    return subject, fit, None
+
+
+def fit_stopping_models(data_table, group_col="block_index", post_params=(), ndt_values=NDT_VALUES,
+                        wall=WALL, max_workers=None):
+    """
+    Fit the stopping model separately to every subject in a data table.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Selected trials (``subject_index``, ``steps``, ``choice``, optional
+        ``change_point``, and ``group_col``).
+    group_col, post_params, ndt_values, wall
+        Passed to fit_stopping_model.
+    max_workers : int or None
+        Processes for the per-subject fits (None = all cores; 1 = no pool).
+
+    Returns
+    -------
+    pd.DataFrame, one row per (subject, group): ``subject_index``, ``group``,
+    the natural-scale parameters, ``n_trials``, ``ndt_p<v>`` for each NDT value,
+    and per-subject ``nll``, ``n_params``, ``success``, ``error`` (message if
+    the fit raised; such subjects have NaN parameters and are never dropped).
+    """
+    kwargs = dict(group_col=group_col, post_params=post_params, ndt_values=ndt_values, wall=wall)
+    jobs = [(s, g, kwargs) for s, g in data_table.groupby("subject_index")]
+    if max_workers == 1:
+        results = [_fit_one_subject(j) for j in jobs]
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_fit_one_subject, jobs))
+
+    rows = []
+    for subject, fit, err in results:
+        if fit is None:
+            rows.append(pd.DataFrame({"subject_index": [subject], "success": [False], "error": [err]}))
+            continue
+        t = fit["params"].copy()
+        t.insert(0, "subject_index", subject)
+        for v, p in fit["ndt_probs"].items():
+            t[f"ndt_p{v}"] = p
+        t["nll"], t["n_params"], t["success"], t["error"] = fit["nll"], fit["n_params"], fit["success"], None
+        rows.append(t)
+    return pd.concat(rows, ignore_index=True)
+
+
+def simulate_stopping_data_table(data_table, fits, group_col="block_index", post_generative_mean=None,
+                                 ndt_values=NDT_VALUES, num_reps=1, max_steps=200, wall=WALL, rng=None):
+    """
+    Simulate each subject's trials from their fitted stopping-model parameters.
+
+    Every real trial is replaced by ``num_reps`` simulated trials with the
+    same subject, group, generative step mean and SD (``|snr| * step_std``,
+    ``step_std``) and change point, so trial counts and SNR mix match the data.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        The trials the fits were made on (``subject_index``, ``group_col``,
+        ``snr``, ``step_std``, optional ``change_point``, ``block_index``).
+    fits : pd.DataFrame
+        Output of fit_stopping_models.
+    group_col : str
+        Column the fits were grouped by.
+    post_generative_mean : dict or None
+        {block_index: post-change step mean magnitude} for change-point
+        blocks; required if any trial has a change point.
+    ndt_values : sequence of int
+    num_reps : int
+    max_steps, wall : see simulate_stopping_trials.
+    rng : np.random.Generator or None
+
+    Returns
+    -------
+    pd.DataFrame from simulate_stopping_trials plus ``subject_index``,
+    ``group_col``, ``block_index``, ``snr`` (abs), ``rep``.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    d = data_table.copy()
+    d["_mean"] = (d["snr"].abs() * d["step_std"]).round(6)
+    d["_cp"] = d["change_point"].fillna(0).astype(int) if "change_point" in d else 0
+    fits = fits.set_index(["subject_index", "group"])
+    out = []
+    for (subject, group, block, mean, std), cell in d.groupby(
+            ["subject_index", group_col, "block_index", "_mean", "step_std"]):
+        f = fits.loc[(subject, group)]
+        if not np.isfinite(f["bound_mean"]):
+            continue
+        cps = np.tile(cell["_cp"].to_numpy(), num_reps)
+        post = {}
+        if np.any(cps > 0):
+            post = {"generative_mean_post": post_generative_mean[block]}
+            for name in POST_PARAMS:
+                if f"{name}_post" in f and np.isfinite(f[f"{name}_post"]):
+                    post[f"{name}_post"] = f[f"{name}_post"]
+        sim = simulate_stopping_trials(
+            len(cps), mean, std, f["bound_mean"], f["bound_std"], f["guess_rate"], f["lapse_rate"],
+            f["anticipation_rate"], ndt_values=ndt_values,
+            ndt_probs=[f[f"ndt_p{v}"] for v in ndt_values], change_point=cps,
+            max_steps=max_steps, wall=wall, rng=rng, **post)
+        sim.insert(0, "subject_index", subject)
+        sim[group_col], sim["block_index"], sim["snr"] = group, block, mean / std
+        sim["rep"] = np.repeat(np.arange(num_reps), len(cell))
+        out.append(sim)
+    return pd.concat(out, ignore_index=True)
