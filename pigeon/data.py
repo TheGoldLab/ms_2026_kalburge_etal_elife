@@ -34,9 +34,11 @@ Main pipeline
 
    CP calibration files must match the data's task design:
    ``get_cp_generative_params`` reads the generative step mean/SD from the
-   data, ``get_data_table`` checks the CP bias-correction file's SNRs
-   against it, and ``load_cp_rr_mats`` checks RRMats.mat's ``g_means`` /
-   ``g_std`` / CP steps before returning it.
+   data, ``get_cp_reward_params`` reads the task's logged reward structure
+   (coins per correct/error, step budget) from the raw files,
+   ``get_data_table`` checks the CP bias-correction file's SNRs against
+   the data, and ``load_cp_rr_mats`` checks RRMats.mat's ``g_means`` /
+   ``g_std``, reward structure, and CP steps before returning it.
 
    Called directly (no caching layer) by ``notebooks/Figure06_cpSummary.ipynb``,
    ``notebooks/Make_RRMatrix.ipynb``, and ``notebooks/Test_cpData.ipynb`` --
@@ -1260,6 +1262,66 @@ def get_cp_generative_params(data_table, decimals=6):
     return params
 
 
+# Reward-structure settings the task logs per block (on each block's metadata
+# row of the raw CSV), keyed by the name used in RR simulations.
+CP_REWARD_COLUMNS = {
+    "coins_gained": "tc_coins_gained_per_correct",
+    "coins_lost": "tc_coins_lost_per_error",
+    "steps_per_block": "tc_steps_max",
+    "steps_to_start": "tc_steps_taken_to_start_trial",
+    "steps_lost": "tc_steps_lost_per_error",
+}
+
+
+def get_cp_reward_params(data_dir=RAW_DATA_DIR, task_type="MXSC"):
+    """Reward structure of the CP task, read from the task's own logged settings.
+
+    The single source of truth for the reward structure RR simulations must
+    use (Make_RRMatrix), checked by `load_cp_rr_mats`. Values come from the
+    `tc_*` columns PsychoPy writes on each block's metadata row, which mirror
+    task/MXSC/Resources/PigeonTaskConditions.xlsx.
+
+    Parameters
+    ----------
+    data_dir : str or Path
+        Top-level raw-data directory (files in ``data_dir/task_type/*.csv``).
+    task_type : str
+        Task subfolder. Default 'MXSC'.
+
+    Returns
+    -------
+    dict
+        coins_gained, coins_lost (coins per correct / error), steps_per_block
+        (step budget), steps_to_start (steps charged to start a trial),
+        steps_lost (step penalty per error), as floats.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no CSV files are found.
+    ValueError
+        If any setting is missing or takes more than one value across files
+        and blocks (the RR simulation assumes one reward structure).
+    """
+    files = sorted(glob.glob(os.path.join(data_dir, task_type, "*.csv")))
+    if not files:
+        raise FileNotFoundError(f"No CSV files in {os.path.join(data_dir, task_type)}")
+    wanted = set(CP_REWARD_COLUMNS.values())
+    values = {name: set() for name in CP_REWARD_COLUMNS}
+    for f in files:
+        d = pd.read_csv(f, usecols=lambda c: c in wanted, low_memory=False)
+        for name, col in CP_REWARD_COLUMNS.items():
+            if col in d.columns:
+                values[name].update(pd.to_numeric(d[col], errors="coerce").dropna().unique().tolist())
+    params = {}
+    for name, vals in values.items():
+        if len(vals) != 1:
+            raise ValueError(f"{CP_REWARD_COLUMNS[name]} takes values {sorted(vals)} across {task_type} "
+                             "files/blocks; expected exactly one.")
+        params[name] = float(vals.pop())
+    return params
+
+
 def check_calibration_snrs(calibrated_snrs, data_table, source="calibration", atol=1e-3):
     """Raise if any SNR in the data was not simulated by a calibration.
 
@@ -1291,7 +1353,7 @@ def check_calibration_snrs(calibrated_snrs, data_table, source="calibration", at
         )
 
 
-def load_cp_rr_mats(path, data_table):
+def load_cp_rr_mats(path, data_table, data_dir=RAW_DATA_DIR):
     """Load the CP reward-rate matrices, verifying they match the data's task design.
 
     Parameters
@@ -1300,20 +1362,25 @@ def load_cp_rr_mats(path, data_table):
         RRMats.mat saved by notebooks/Make_RRMatrix.ipynb.
     data_table : pd.DataFrame
         MXSC data table from `get_data_table` (canonical block numbering).
+    data_dir : str or Path
+        Raw-data directory, read by `get_cp_reward_params` for the task's
+        logged reward structure.
 
     Returns
     -------
     dict
         The loaded .mat contents (`squeeze_me=True, struct_as_record=False`),
         with `pmats` (LowHigh, HighLow), `bounds`, `cp_steps_lh`,
-        `cp_steps_hl`, `g_means`, `g_std`.
+        `cp_steps_hl`, `g_means`, `g_std`, and the reward structure
+        (`coins_gained`, `coins_lost`, `steps_per_block`).
 
     Raises
     ------
     ValueError
         If the matrices were simulated at different generative means/SD than
-        the data's fixed blocks, or if any CP step in the data (blocks 3/4)
-        is missing from the matrices' CP-step axis.
+        the data's fixed blocks, under a different (or unrecorded) reward
+        structure than the task logged, or if any CP step in the data
+        (blocks 3/4) is missing from the matrices' CP-step axis.
     """
     rr_mat = scipy.io.loadmat(path, squeeze_me=True, struct_as_record=False)
     gen = get_cp_generative_params(data_table)
@@ -1329,6 +1396,14 @@ def load_cp_rr_mats(path, data_table):
             f"data's fixed blocks use means {expected_means}, std {expected_std}. "
             "Rebuild it with notebooks/Make_RRMatrix.ipynb."
         )
+    reward = get_cp_reward_params(data_dir)
+    for key in ("coins_gained", "coins_lost", "steps_per_block"):
+        if key not in rr_mat:
+            raise ValueError(f"{path} does not record its reward structure ({key}); "
+                             "rebuild it with notebooks/Make_RRMatrix.ipynb.")
+        if not np.isclose(float(rr_mat[key]), reward[key]):
+            raise ValueError(f"{path} was simulated with {key}={float(rr_mat[key])}, but the task "
+                             f"logged {reward[key]}. Rebuild it with notebooks/Make_RRMatrix.ipynb.")
     for block, key in ((3, "cp_steps_lh"), (4, "cp_steps_hl")):
         data_steps = np.unique(data_table.loc[data_table["block_index"] == block, "change_point"].dropna())
         missing = np.setdiff1d(data_steps, np.atleast_1d(rr_mat[key]).astype(float))

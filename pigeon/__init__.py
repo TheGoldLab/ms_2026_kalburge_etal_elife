@@ -35,6 +35,7 @@ get_bound_summary       Mean |bound| per subject/block/SNR/DT bin.
 get_performance_summary Accuracy and DT stats per subject/block/SNR.
 get_bound_summaries_wcp Change-point-specific composed bound summary (Figure06/Make_RRMatrix pipeline).
 get_cp_generative_params CP task's low/high-SNR step mean and SD, read from the data.
+get_cp_reward_params    CP task's reward structure, read from the raw files' logged settings.
 load_cp_rr_mats         Load RRMats.mat, verifying it matches the data's CP design.
 simulate_trials         Core simulation engine (returns raw arrays).
 get_simulated_data_table Full simulated data table matching get_data_table format.
@@ -44,7 +45,7 @@ get_adaptation_tau_fits Per-subject/block adaptation tau fits (Figure04 pipeline
 from .data import (
     get_data_table, get_bounds, get_good_trial_array,
     get_bound_summary, get_performance_summary, get_bound_summaries_wcp,
-    get_cp_generative_params, load_cp_rr_mats,
+    get_cp_generative_params, get_cp_reward_params, load_cp_rr_mats,
 )
 from .simulation import simulate_trials, get_simulated_data_table
 from .adaptation import get_adaptation_tau_fits
