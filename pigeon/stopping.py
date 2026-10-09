@@ -1,5 +1,6 @@
 """
-Trial-level stopping model: variable bound, guesses, anticipations, and choice lapses.
+Trial-level stopping model: variable, time-varying bound with sensory noise,
+plus guesses, anticipations, and choice lapses.
 
 Fits *when* a subject commits and *which* side they choose from the pigeon's
 full on-screen path on every trial, instead of inferring one bound per trial
@@ -9,57 +10,69 @@ notebooks/Test_stoppingModel.ipynb.
 Generative model (per trial)
 ----------------------------
 Positions ``x_0 = 0, x_1, x_2, ...`` are the pigeon's on-screen positions (the
-``steps`` column of ``get_data_table``; clamped at +/-WALL by the task).
+``steps`` column of ``get_data_table``; clamped at +/-WALL by the task). Each
+position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
 
 1. **Anticipation.** With probability ``anticipation_rate`` the subject commits
    before any step is shown (commit step k <= 0). The choice is random, and
    the response comes uniformly within the first NDT + 1 frames.
-2. **Variable bound.** Otherwise each trial draws a bound percentile
-   ``u ~ U(0, 1)``; the bound at step j is ``F_j^{-1}(u)``, where ``F_j`` is the
-   CDF of a gamma distribution with mean ``bound_mean`` and SD ``bound_std``
-   (the ``_post`` values for steps j >= change_point on change-point trials).
-   The bound commits at the first j >= 1 with ``F_j(|x_j|) >= u``. Keeping the
-   percentile fixed means a trial's bound stays relatively high or low across
-   the change point.
-3. **Guess.** Independently, at every step j >= 1 the subject commits with
-   probability ``guess_rate`` regardless of the evidence.
-4. **Choice.** The side the pigeon is on at the commit step, except that with
-   probability ``lapse_rate`` the choice is random (random also at x = 0).
-5. **NDT.** The response comes NDT + 1 frames after the commit step,
-   ``RT = k + NDT + 1`` (the ``DT = RT - NDT - 1`` convention of ``get_bounds``),
-   with NDT drawn from ``ndt_probs`` over ``ndt_values``.
+2. **Bound.** The bound at step j is ``b_j = m * theta(j)``. The trial's
+   multiplier ``m`` is gamma-distributed with mean 1 and coefficient of
+   variation ``bound_cv``. The time course ``theta(j)`` is
+   ``bound_scale * h(j)``, where ``log h`` is piecewise linear in j through
+   ``knots`` (constant outside them) with ``h(knots[0]) = 1``; so
+   ``bound_scale`` is the mean bound at the first knot. ``h`` is shared by all
+   of a subject's groups (``time_course='shared'``), separate per group
+   (``'per_group'``), or flat (``'flat'``). On change-point trials, positions
+   j >= change_point use ``bound_scale_post`` (if fit).
+3. **Sensory noise.** The subject sees ``y_j = x_j + e_j`` with independent
+   ``e_j ~ N(0, sensory_std^2)``, and commits at the first j >= 1 with
+   ``|y_j| >= b_j``, choosing the side crossed. ``sensory_std = 0`` gives exact
+   crossings of the on-screen position.
+4. **Guess.** If the bound isn't crossed at step j, the subject commits anyway
+   with probability ``guess_rate`` (regardless of the evidence), choosing the
+   side of the perceived position ``y_j``.
+5. **Lapse.** With probability ``lapse_rate`` the choice is random instead.
+6. **NDT.** The response comes NDT + 1 frames after the commit step,
+   ``RT = k + NDT + 1`` (the ``DT = RT - NDT - 1`` convention of
+   ``get_bounds``). Default support NDT in {1, 2}: 200-400 / 400-600 ms from the
+   commit position appearing to the key press; longer delays are not
+   physiologically plausible as a sensorimotor latency.
 
 Likelihood
 ----------
-With ``A_k = max_{1<=j<=k} F_j(|x_j|)`` (``A_0 = 0``) and
-``G_k = prod_{j=1..k} (1 - guess_rate_j)``, the probability of no commit
-through step k is ``S_k = (1 - anticipation_rate) * G_k * (1 - A_k)``, so
-P(commit at k) = ``S_{k-1} - S_k`` for k >= 1. A bound can only fire when the
-pigeon reaches a new maximum distance from center; a guess can fire anywhere.
-That difference is what separates guesses from low bounds. Each trial's
-likelihood averages over NDT.
+Given m, steps are independent: with ``q_j = P(|y_j| < b_j)`` and up/down
+crossing probabilities ``r_j^+ = P(y_j >= b_j)``, ``r_j^- = P(y_j <= -b_j)``, the
+probability of no commit through step k is
+``S_k = (1 - anticipation_rate) * prod_{j=1..k} q_j (1 - guess_rate_j)``, and
+P(commit at k, right) = ``S_{k-1} [r_k^+ + q_k guess_rate_k P(y_k > 0)]``
+(left analogously). The integral over m is restricted, per trial, to the
+window where the integrand varies (see ``_trial_likelihood_padded``); outside
+it the integrand is ~0 (bound crossed earlier) or constant (only guesses can
+commit). Lapses mix the choice with 1/2; each trial's likelihood
+averages over NDT.
 
 **Wall-hit trials.** Once the pigeon reaches the wall (first step w with
 |x_w| >= WALL) it stays at the edge until the key press, so a long RT after
 that carries no information about stopping. A wall trial whose response came
 later than any NDT allows (RT > w + max(ndt_values) + 1) contributes
 ``S_{w-1}`` (no commit before the wall) times the choice probability at the
-wall, instead of a point probability. Wall trials answered within that window
-use the ordinary likelihood. (Censoring only per NDT value instead lets the
-censored mass compete with point probabilities and biases NDT and the bound
-upward; see tests/test_stopping.py.)
+wall; wall trials answered within that window use the ordinary likelihood.
+(Censoring per NDT value instead lets the censored mass compete with point
+probabilities and biases NDT and the bound upward.)
 
 Fitting
 -------
-``fit_stopping_model`` maximizes the likelihood over all trials of one
-subject with ``scipy.optimize.minimize`` (L-BFGS-B), on transformed scales
-(log bound_mean/std, logit rates, softmax NDT). Bound, guess, lapse and
-anticipation parameters are per group (e.g. per block); NDT probabilities are
-shared across groups. ``post_params`` adds separate post-change-point values.
+``fit_stopping_model`` maximizes the penalized likelihood over all trials of
+one subject with L-BFGS-B on transformed scales. Per group: ``bound_scale``,
+``bound_cv``, ``guess_rate``, ``lapse_rate``, ``anticipation_rate`` (and any
+``post_params``). Per subject: ``sensory_std``, the NDT probabilities, and the
+time-course knots. A weak penalty on adjacent differences of ``log h``
+(``smooth_penalty``; Gaussian prior SD ``1/sqrt(2 * smooth_penalty)`` on each
+log change) keeps poorly sampled late knots near their neighbors.
 
-Units: ``bound_mean`` and ``bound_std`` are in position units (the same units as
-the ``bound`` column), on *raw* positions -- no bias correction, because the
-likelihood accounts for overshoot directly.
+Units: ``bound_scale`` and ``sensory_std`` are in position units on *raw*
+positions (no bias correction; the likelihood accounts for overshoot).
 """
 
 from __future__ import annotations
@@ -72,30 +85,58 @@ import scipy.stats
 
 from .data import WALL
 
-NDT_VALUES = (1, 2, 3)
-GROUP_PARAMS = ("bound_mean", "bound_std", "guess_rate", "lapse_rate", "anticipation_rate")
-POST_PARAMS = ("bound_mean", "bound_std", "guess_rate")
+NDT_VALUES = (1, 2)
+KNOTS = (1, 3, 6, 10, 16)
+GROUP_PARAMS = ("bound_scale", "bound_cv", "guess_rate", "lapse_rate", "anticipation_rate")
+POST_PARAMS = ("bound_scale", "guess_rate")
+TIME_COURSES = ("flat", "shared", "per_group")
 
-# Transformed-parameter limits for the optimizer: bounds 0.002-2 (position
-# units), rates 1e-6 to ~0.9998 (logit +/-8.5 with a small margin).
+# Optimizer limits on the transformed scales.
 _LOG_POS_LIMITS = (np.log(0.002), np.log(2.0))
+_LOG_CV_LIMITS = (np.log(0.03), np.log(2.0))
+_LOG_SENSORY_LIMITS = (np.log(1e-3), np.log(1.0))
 _LOGIT_LIMITS = (-14.0, 8.5)
 _NDT_LOGIT_LIMITS = (-10.0, 10.0)
+_LOG_H_LIMITS = (-3.0, 3.0)
 _MIN_LIK = 1e-300
+_TINY = 1e-300
 
 
-def _gamma_cdf(x, mean, std):
-    """Gamma CDF parameterized by mean and SD (elementwise, broadcastable)."""
-    shape = (mean / std) ** 2
-    scale = std ** 2 / mean
-    return scipy.stats.gamma.cdf(x, a=shape, scale=scale)
+def _gamma_ppf(u, cv):
+    """Quantiles of a mean-1 gamma with coefficient of variation cv (broadcastable)."""
+    shape = 1.0 / np.asarray(cv, float) ** 2
+    return scipy.stats.gamma.ppf(u, a=shape, scale=1.0 / shape)
 
 
-def _gamma_ppf(q, mean, std):
-    """Gamma quantile function parameterized by mean and SD."""
-    shape = (mean / std) ** 2
-    scale = std ** 2 / mean
-    return scipy.stats.gamma.ppf(q, a=shape, scale=scale)
+def _log_h(log_h_knots, knots, num_steps):
+    """(..., num_steps) log time course: piecewise linear in step through the knots."""
+    j = np.arange(num_steps)
+    log_h_knots = np.atleast_2d(log_h_knots)
+    return np.stack([np.interp(j, knots, row) for row in log_h_knots])
+
+
+def bound_time_course(fit_row, steps, knots=KNOTS, post=False):
+    """
+    Mean bound at each step for one fitted group.
+
+    Parameters
+    ----------
+    fit_row : mapping
+        A row of fit_stopping_model's ``params`` table (or fit_stopping_models'
+        output), with ``bound_scale`` and ``log_h_k<knot>`` entries.
+    steps : array-like of int
+        Steps at which to evaluate theta(j).
+    knots : sequence of int
+    post : bool
+        Use ``bound_scale_post`` instead of ``bound_scale``.
+
+    Returns
+    -------
+    np.ndarray of mean bounds (position units).
+    """
+    scale = fit_row["bound_scale_post" if post else "bound_scale"]
+    lh = [fit_row.get(f"log_h_k{k}", 0.0) for k in knots]
+    return scale * np.exp(np.interp(np.asarray(steps), knots, lh))
 
 
 def _pad_steps(steps_list):
@@ -109,15 +150,29 @@ def _pad_steps(steps_list):
     return x, lens
 
 
-def _per_step(param_pre, param_post, group_idx, post_mask):
-    """(n, L) matrix of a parameter: post value where post_mask, else pre value."""
-    pre = np.asarray(param_pre)[group_idx][:, None]
-    post = np.asarray(param_post)[group_idx][:, None]
-    return np.where(post_mask, post, pre)
+def _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values, ndt_probs,
+                      n_quad=24, wall=WALL, n_buckets=4):
+    """
+    Per-trial likelihood, computed in length buckets.
+
+    Trials range from 1 to ~50 steps, so a single NaN-padded (n, L, n_quad)
+    array is mostly padding; sorting trials by length and padding each bucket
+    only to its own maximum gives the same result much faster.
+    """
+    order = np.argsort(lens, kind="stable")
+    lik = np.empty(len(lens))
+    for idx in np.array_split(order, min(n_buckets, len(order))):
+        if idx.size == 0:
+            continue
+        L = int(lens[idx].max())
+        lik[idx] = _trial_likelihood_padded(
+            x[idx, :L], lens[idx], choice_pm[idx], group_idx[idx], post_mask[idx, :L], p, knots,
+            ndt_values, ndt_probs, n_quad=n_quad, wall=wall)
+    return lik
 
 
-def _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, params, ndt_values, ndt_probs,
-                      wall=WALL):
+def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values, ndt_probs,
+                             n_quad=24, wall=WALL):
     """
     Per-trial likelihood of (RT, choice) under the stopping model.
 
@@ -133,93 +188,169 @@ def _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, params, ndt_valu
         Index into the per-group parameter arrays.
     post_mask : (n, L) bool array
         True for positions governed by the post-change-point parameters.
-    params : dict
-        Per-group arrays for GROUP_PARAMS, and ``<name>_post`` for POST_PARAMS
-        (equal to the pre values when not split).
-    ndt_values, ndt_probs : sequences
-        NDT support and probabilities.
+    p : dict
+        Natural-scale parameters: per-group arrays for GROUP_PARAMS and
+        ``<name>_post`` for POST_PARAMS, ``log_h`` of shape (n_shapes, len(knots))
+        with n_shapes 1 or n_groups, scalar ``sensory_std``.
+    knots, ndt_values, ndt_probs, n_quad, wall
+        See module docstring.
 
     Returns
     -------
     (n,) array of likelihoods.
+
+    Notes
+    -----
+    The integral over the bound multiplier m is split per trial (and per
+    target step k). Below ``a = max_{j<k} (|x_j| - 5 sd) / theta_j`` the bound
+    was almost surely crossed earlier, so the integrand is ~0. Above
+    ``c = max_{j<=k} (|x_j| + 5 sd) / theta_j`` the bound was almost surely
+    never reached, so only guesses commit and the integrand is constant (closed
+    form). Only [a, c] needs quadrature: ``n_quad`` Gauss-Legendre nodes in the
+    gamma CDF scale (24 nodes: within ~0.15 log-likelihood units of a 128-node
+    reference over 1500 trials at any sensory_std). With sd = 0 this is exact. (Fixed nodes over the whole
+    distribution truncate its upper tail and give near-zero likelihood to
+    trials where the pigeon wandered far before committing.)
     """
     n, L = x.shape
-    ax = np.abs(np.nan_to_num(x, nan=0.0))
+    xx = np.nan_to_num(x, nan=0.0)
+    ax = np.abs(xx)
+    sig = float(p["sensory_std"])
+    rows = np.arange(n)
 
-    bm = _per_step(params["bound_mean"], params["bound_mean_post"], group_idx, post_mask)
-    bs = _per_step(params["bound_std"], params["bound_std_post"], group_idx, post_mask)
-    gr = _per_step(params["guess_rate"], params["guess_rate_post"], group_idx, post_mask)
-    lapse = np.asarray(params["lapse_rate"])[group_idx]
-    antic = np.asarray(params["anticipation_rate"])[group_idx]
+    log_h = _log_h(p["log_h"], knots, L)
+    shape_idx = group_idx if log_h.shape[0] > 1 else np.zeros(n, int)
+    scale = np.where(post_mask, np.asarray(p["bound_scale_post"])[group_idx][:, None],
+                     np.asarray(p["bound_scale"])[group_idx][:, None])
+    theta = scale * np.exp(log_h[shape_idx])                                  # (n, L)
+    kappa = (1.0 / np.asarray(p["bound_cv"], float) ** 2)[group_idx]           # gamma shape, mean 1
 
-    # A_k: running max of F_j(|x_j|) over j >= 1 (A_0 = 0 since x_0 = 0).
-    f = _gamma_cdf(ax, bm, bs)
-    f[:, 0] = 0.0
-    a_run = np.maximum.accumulate(f, axis=1)
-    # G_k: probability of no guess through step k (G_0 = 1).
-    g_surv = np.cumprod(np.where(np.arange(L) == 0, 1.0, 1.0 - gr), axis=1)
-    surv = (1.0 - antic)[:, None] * g_surv * (1.0 - a_run)  # S_k, k = 0..L-1
+    gr = np.where(post_mask, np.asarray(p["guess_rate_post"])[group_idx][:, None],
+                  np.asarray(p["guess_rate"])[group_idx][:, None])
+    gr[:, 0] = 0.0
+    lapse = np.asarray(p["lapse_rate"])[group_idx]
+    antic = np.asarray(p["anticipation_rate"])[group_idx]
+    log_guess_surv = np.log1p(-antic)[:, None] + np.cumsum(np.log1p(-gr), axis=1)   # no guess through k
+    if sig > 0:
+        p_right = scipy.special.ndtr(xx / sig)
+        lo, hi = (ax - 5 * sig) / theta, (ax + 5 * sig) / theta
+    else:
+        p_right = np.where(xx > 0, 1.0, np.where(xx < 0, 0.0, 0.5))
+        lo = hi = ax / theta
+    lo[:, 0] = hi[:, 0] = 0.0
+    run_lo = np.maximum.accumulate(np.maximum(lo, 0.0), axis=1)
+    run_hi = np.maximum.accumulate(hi, axis=1)
+    gl_x, gl_w = np.polynomial.legendre.leggauss(n_quad)
+    nodes, weights = (gl_x + 1) / 2, gl_w / 2          # Gauss-Legendre on [0, 1]
 
-    # Choice probability if the commit is at step k.
-    sgn = np.sign(np.nan_to_num(x, nan=0.0))
-    p_choice = np.where(
-        sgn == 0, 0.5,
-        np.where(sgn == choice_pm[:, None], 1.0 - lapse[:, None] / 2, lapse[:, None] / 2),
-    )
+    def integrate(k, commit):
+        """Integral over m of S_{k-1} (survive) or S_{k-1} * commit-at-k terms (right, left)."""
+        a = run_lo[rows, k - 1]
+        c = run_hi[rows, k] if commit else run_hi[rows, k - 1]
+        c = np.maximum(c, a)
+        ua = scipy.stats.gamma.cdf(a, kappa, scale=1 / kappa)
+        uc = scipy.stats.gamma.cdf(c, kappa, scale=1 / kappa)
+        u = ua[:, None] + (uc - ua)[:, None] * nodes[None, :]
+        m = scipy.stats.gamma.ppf(u, kappa[:, None], scale=1 / kappa[:, None])   # (n, Q)
+        kmax = int(k.max())
+        b = theta[:, :kmax + 1, None] * m[:, None, :]                          # (n, kmax+1, Q)
+        xb = xx[:, :kmax + 1, None]
+        if sig > 0:
+            up = scipy.special.ndtr((xb - b) / sig)
+            dn = scipy.special.ndtr((-b - xb) / sig)
+        else:
+            up = (xb >= b).astype(float)
+            dn = (xb <= -b).astype(float)
+        up[:, 0, :] = dn[:, 0, :] = 0.0
+        q = np.clip(1.0 - up - dn, 0.0, 1.0)
+        log_q = np.cumsum(np.log(np.maximum(q, _TINY)), axis=1)
+        s_prev_guess = np.exp(log_guess_surv[rows, k - 1])
+        s_prev = s_prev_guess[:, None] * np.exp(log_q[rows, k - 1, :])        # (n, Q)
+        width = uc - ua
+        if not commit:
+            return width * (s_prev @ weights) + (1 - uc) * s_prev_guess
+        g_k = gr[rows, k][:, None]
+        pr_k = p_right[rows, k][:, None]
+        q_k = q[rows, k, :]
+        pr = width * ((s_prev * (up[rows, k, :] + q_k * g_k * pr_k)) @ weights)
+        pl = width * ((s_prev * (dn[rows, k, :] + q_k * g_k * (1 - pr_k))) @ weights)
+        pr += (1 - uc) * s_prev_guess * g_k[:, 0] * pr_k[:, 0]
+        pl += (1 - uc) * s_prev_guess * g_k[:, 0] * (1 - pr_k[:, 0])
+        return pr, pl
 
-    # First step at the wall (L if never).
     at_wall = ax >= wall - 1e-9
     wall_step = np.where(at_wall.any(axis=1), at_wall.argmax(axis=1), L)
-
-    rows = np.arange(n)
-    # Wall trials whose response came too late for any NDT after the wall: the
-    # commit was at or after the wall step, timing unknown (censored).
     lw = lens > wall_step + max(ndt_values) + 1
-    w = wall_step[lw]
+
     lik = np.zeros(n)
-    lik[lw] = surv[rows[lw], w - 1] * p_choice[rows[lw], w]
+    if lw.any():
+        w = np.where(lw, wall_step, 1)
+        s_wall = integrate(w, commit=False)
+        same = np.sign(xx[rows, np.minimum(w, L - 1)]) == choice_pm
+        lik[lw] = (s_wall * np.where(same, 1 - lapse / 2, lapse / 2))[lw]
 
     for ndt, p_ndt in zip(ndt_values, ndt_probs):
         k = lens - ndt - 1
         term = np.zeros(n)
-
         lant = ~lw & (k <= 0)
         term[lant] = antic[lant] / (ndt + 1) * 0.5
-
         lk = ~lw & ~lant
-        kk = k[lk]
-        term[lk] = (surv[rows[lk], kk - 1] - surv[rows[lk], kk]) * p_choice[rows[lk], kk]
-
+        if lk.any():
+            kk = np.where(lk, k, 1)
+            pr, pl = integrate(kk, commit=True)
+            p_c = np.where(choice_pm > 0, pr, pl)
+            term[lk] = ((1 - lapse) * p_c + lapse / 2 * (pr + pl))[lk]
         lik += p_ndt * np.maximum(term, 0.0)
     return lik
 
 
-def _unpack(theta, n_groups, post_params, n_ndt):
-    """Map the unconstrained parameter vector to natural-scale parameter arrays."""
-    i = 0
+class _Layout:
+    """Bookkeeping between the transformed parameter vector and named parameters."""
 
-    def take(m):
-        nonlocal i
-        out = theta[i:i + m]
-        i += m
-        return out
+    def __init__(self, n_groups, post_params, n_ndt, time_course, n_knots, fixed):
+        self.n_groups, self.n_ndt, self.time_course = n_groups, n_ndt, time_course
+        self.post_params = tuple(q for q in POST_PARAMS if q in post_params)
+        self.fixed = dict(fixed or {})
+        self.n_shapes = {"flat": 0, "shared": 1, "per_group": n_groups}[time_course]
+        self.n_free_h = n_knots - 1
+        spec = []   # (name, size, limits)
+        G = n_groups
+        spec += [("bound_scale", G, _LOG_POS_LIMITS), ("bound_cv", G, _LOG_CV_LIMITS),
+                 ("guess_rate", G, _LOGIT_LIMITS), ("lapse_rate", G, _LOGIT_LIMITS),
+                 ("anticipation_rate", G, _LOGIT_LIMITS)]
+        for name in self.post_params:
+            spec.append((f"{name}_post", G, _LOGIT_LIMITS if name == "guess_rate" else _LOG_POS_LIMITS))
+        spec.append(("sensory_std", 1, _LOG_SENSORY_LIMITS))
+        spec.append(("ndt_logits", n_ndt - 1, _NDT_LOGIT_LIMITS))
+        spec.append(("log_h", self.n_shapes * self.n_free_h, _LOG_H_LIMITS))
+        self.spec = [s for s in spec if s[0] not in self.fixed and s[1] > 0]
 
-    p = {
-        "bound_mean": np.exp(take(n_groups)),
-        "bound_std": np.exp(take(n_groups)),
-        "guess_rate": scipy.special.expit(take(n_groups)),
-        "lapse_rate": scipy.special.expit(take(n_groups)),
-        "anticipation_rate": scipy.special.expit(take(n_groups)),
-    }
-    for name in POST_PARAMS:
-        if name in post_params:
-            raw = take(n_groups)
-            p[f"{name}_post"] = scipy.special.expit(raw) if name == "guess_rate" else np.exp(raw)
-        else:
-            p[f"{name}_post"] = p[name]
-    ndt_logits = np.r_[0.0, take(n_ndt - 1)]
-    ndt_probs = np.exp(ndt_logits - scipy.special.logsumexp(ndt_logits))
-    return p, ndt_probs
+    def limits(self):
+        return [lim for _, size, lim in self.spec for _ in range(size)]
+
+    def unpack(self, theta):
+        out, i = {}, 0
+        for name, size, _ in self.spec:
+            out[name] = theta[i:i + size]
+            i += size
+        p = {}
+        for name in GROUP_PARAMS + tuple(f"{q}_post" for q in self.post_params):
+            if name in self.fixed:
+                p[name] = np.broadcast_to(np.asarray(self.fixed[name], float), (self.n_groups,))
+            elif name.startswith(("guess_rate", "lapse_rate", "anticipation_rate")):
+                p[name] = scipy.special.expit(out[name])
+            else:
+                p[name] = np.exp(out[name])
+        for name in POST_PARAMS:
+            p.setdefault(f"{name}_post", p[name])
+        p["sensory_std"] = (float(self.fixed["sensory_std"]) if "sensory_std" in self.fixed
+                            else float(np.exp(out["sensory_std"][0])))
+        logits = np.r_[0.0, out.get("ndt_logits", np.zeros(0))]
+        p["ndt_probs"] = np.exp(logits - scipy.special.logsumexp(logits))
+        free_h = out.get("log_h", np.zeros(0)).reshape(max(self.n_shapes, 1), -1) \
+            if self.n_shapes else np.zeros((1, self.n_free_h))
+        p["log_h"] = np.hstack([np.zeros((free_h.shape[0], 1)), free_h])
+        return p
 
 
 def _prepare(data_table, group_col):
@@ -230,13 +361,12 @@ def _prepare(data_table, group_col):
     group_values, group_idx = np.unique(groups, return_inverse=True)
     cp = (data_table["change_point"].fillna(0).to_numpy(float)
           if "change_point" in data_table else np.zeros(len(data_table)))
-    steps_idx = np.arange(x.shape[1])[None, :]
-    post_mask = (cp[:, None] > 0) & (steps_idx >= cp[:, None])
+    post_mask = (cp[:, None] > 0) & (np.arange(x.shape[1])[None, :] >= cp[:, None])
     return x, lens, choice_pm, group_values, group_idx, post_mask
 
 
-def stopping_model_nll(data_table, params, ndt_probs, group_col="block_index",
-                       ndt_values=NDT_VALUES, wall=WALL):
+def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
+                       ndt_values=NDT_VALUES, n_quad=24, wall=WALL):
     """
     Negative log-likelihood of a data table under given stopping-model parameters.
 
@@ -246,36 +376,33 @@ def stopping_model_nll(data_table, params, ndt_probs, group_col="block_index",
         get_data_table-style rows (``steps``, ``choice``, optionally
         ``change_point`` and ``group_col``).
     params : dict
-        Natural-scale parameters: GROUP_PARAMS and ``<name>_post`` for
-        POST_PARAMS, each a scalar or one value per group (sorted group order).
-    ndt_probs : sequence of float
-        P(NDT = v) for v in ``ndt_values``.
-    group_col : str or None
-        Column that indexes the per-group parameters.
-    ndt_values : sequence of int
-        NDT support.
-    wall : float
-        Screen-edge position.
+        Natural-scale parameters: GROUP_PARAMS (scalar or one per group, in
+        sorted group order), optional ``<name>_post``, ``sensory_std``,
+        ``ndt_probs`` (one per ndt value), optional ``log_h`` (values at the
+        knots, first = 0; shape (len(knots),) or (n_groups, len(knots));
+        default flat).
+    group_col, knots, ndt_values, n_quad, wall
+        See fit_stopping_model.
 
     Returns
     -------
     float
     """
     x, lens, choice_pm, group_values, group_idx, post_mask = _prepare(data_table, group_col)
-    n_groups = len(group_values)
-    full = {}
-    for name in GROUP_PARAMS:
-        full[name] = np.broadcast_to(np.asarray(params[name], float), (n_groups,))
+    G = len(group_values)
+    p = {name: np.broadcast_to(np.asarray(params[name], float), (G,)) for name in GROUP_PARAMS}
     for name in POST_PARAMS:
-        full[f"{name}_post"] = np.broadcast_to(
-            np.asarray(params.get(f"{name}_post", params[name]), float), (n_groups,))
-    lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, full,
-                            ndt_values, np.asarray(ndt_probs, float), wall=wall)
+        p[f"{name}_post"] = np.broadcast_to(np.asarray(params.get(f"{name}_post", params[name]), float), (G,))
+    p["sensory_std"] = params["sensory_std"]
+    p["log_h"] = np.atleast_2d(params.get("log_h", np.zeros(len(knots))))
+    lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values,
+                            np.asarray(params["ndt_probs"], float), n_quad=n_quad, wall=wall)
     return float(-np.sum(np.log(np.maximum(lik, _MIN_LIK))))
 
 
-def fit_stopping_model(data_table, group_col="block_index", post_params=(),
-                       ndt_values=NDT_VALUES, wall=WALL, x0=None):
+def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="shared",
+                       knots=KNOTS, ndt_values=NDT_VALUES, fixed=None, smooth_penalty=0.5,
+                       n_quad=24, wall=WALL, x0=None):
     """
     Maximum-likelihood fit of the stopping model to one subject's trials.
 
@@ -287,78 +414,96 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(),
         optionally ``change_point`` (step index; 0 or NaN = none). Trial
         selection is the caller's job; rows with a missing choice raise.
     group_col : str or None
-        Column whose values get separate bound/guess/lapse/anticipation
-        parameters (e.g. ``"block_index"``). None fits one set.
+        Column whose values get separate per-group parameters.
     post_params : sequence of str
-        Subset of POST_PARAMS that get separate post-change-point values.
+        Subset of POST_PARAMS with separate post-change-point values.
+    time_course : {'flat', 'shared', 'per_group'}
+        Bound time course across steps (see module docstring).
+    knots : sequence of int
+        Steps at which log h is free (the first is fixed at 0).
     ndt_values : sequence of int
         NDT support; probabilities are fit and shared across groups.
+    fixed : dict or None
+        Parameters held fixed at natural-scale values, e.g.
+        ``{'sensory_std': 0.0}`` (exact crossings) or ``{'guess_rate': 0.0}``.
+    smooth_penalty : float
+        Weight on squared adjacent differences of log h (0 = none).
+    n_quad : int
+        Quadrature nodes for the bound multiplier.
     wall : float
         Screen-edge position (see module docstring on wall-hit trials).
     x0 : array or None
-        Starting point on the transformed scale; default is a data-driven guess.
+        Starting point on the transformed scale; default is data-driven.
 
     Returns
     -------
     dict with keys
-        ``params``     : pd.DataFrame, one row per group, natural-scale parameters
-        ``ndt_probs``  : dict {ndt: probability}
-        ``nll``        : float, minimized negative log-likelihood
-        ``n_trials``   : int
-        ``n_params``   : int
-        ``success``    : bool, optimizer convergence flag
-        ``message``    : str, optimizer message
-        ``theta``      : array, transformed-scale optimum
+        ``params``      : pd.DataFrame, one row per group: natural-scale group
+                          parameters, ``n_trials``, ``sensory_std``, ``ndt_p<v>``,
+                          and ``log_h_k<knot>`` (that group's time course)
+        ``nll``         : float, negative log-likelihood (without the penalty)
+        ``n_trials``    : int
+        ``n_params``    : int, number of free parameters
+        ``success``     : bool
+        ``message``     : str
+        ``theta``       : array, transformed-scale optimum
     """
     if data_table["choice"].isna().any():
         raise ValueError("fit_stopping_model: rows with missing choice; select trials first.")
     unknown = set(post_params) - set(POST_PARAMS)
     if unknown:
         raise ValueError(f"post_params must be a subset of {POST_PARAMS}; got {sorted(unknown)}.")
+    if time_course not in TIME_COURSES:
+        raise ValueError(f"time_course must be one of {TIME_COURSES}.")
 
     x, lens, choice_pm, group_values, group_idx, post_mask = _prepare(data_table, group_col)
-    n_groups, n_ndt = len(group_values), len(ndt_values)
-    post_params = tuple(p for p in POST_PARAMS if p in post_params)
+    G = len(group_values)
+    lay = _Layout(G, post_params, len(ndt_values), time_course, len(knots), fixed)
 
     if x0 is None:
-        # Start the bound at the median |position| at the DT-convention commit step (NDT = 1).
         k = np.clip(lens - 2, 0, x.shape[1] - 1)
-        med = np.nanmedian(np.abs(x[np.arange(len(k)), k])[k > 0]) if np.any(k > 0) else 0.1
-        med = float(np.clip(med, 0.02, 1.0))
-        blocks = [np.full(n_groups, np.log(med)), np.full(n_groups, np.log(med / 2)),
-                  np.full(n_groups, scipy.special.logit(0.02)),
-                  np.full(n_groups, scipy.special.logit(0.05)),
-                  np.full(n_groups, scipy.special.logit(max(np.mean(lens <= 2), 0.01)))]
-        for name in post_params:
-            blocks.append(blocks[GROUP_PARAMS.index(name)])
-        blocks.append(np.zeros(n_ndt - 1))
-        x0 = np.concatenate(blocks)
+        ax_k = np.abs(x[np.arange(len(k)), k])[k > 0]
+        med = float(np.clip(np.nanmedian(ax_k) if ax_k.size else 0.1, 0.02, 1.0))
+        step_sd = np.nanstd(np.diff(x, axis=1))
+        start = {
+            "bound_scale": np.full(G, np.log(med)), "bound_cv": np.full(G, np.log(0.4)),
+            "guess_rate": np.full(G, scipy.special.logit(0.02)),
+            "lapse_rate": np.full(G, scipy.special.logit(0.03)),
+            "anticipation_rate": np.full(G, scipy.special.logit(max(np.mean(lens <= 2), 0.005))),
+            "bound_scale_post": np.full(G, np.log(med)),
+            "guess_rate_post": np.full(G, scipy.special.logit(0.02)),
+            "sensory_std": np.array([np.log(max(0.3 * step_sd, 2e-3))]),
+            "ndt_logits": np.zeros(len(ndt_values) - 1),
+            "log_h": np.zeros(lay.n_shapes * lay.n_free_h),
+        }
+        x0 = np.concatenate([start[name] for name, _, _ in lay.spec])
 
-    limits = ([_LOG_POS_LIMITS] * 2 * n_groups + [_LOGIT_LIMITS] * 3 * n_groups)
-    for name in post_params:
-        limits += [_LOGIT_LIMITS if name == "guess_rate" else _LOG_POS_LIMITS] * n_groups
-    limits += [_NDT_LOGIT_LIMITS] * (n_ndt - 1)
+    def objective(theta):
+        p = lay.unpack(theta)
+        lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values,
+                                p["ndt_probs"], n_quad=n_quad, wall=wall)
+        nll = -np.sum(np.log(np.maximum(lik, _MIN_LIK)))
+        return nll + smooth_penalty * np.sum(np.diff(p["log_h"], axis=1) ** 2), nll
 
-    def nll(theta):
-        p, ndt_probs = _unpack(theta, n_groups, post_params, n_ndt)
-        lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p,
-                                ndt_values, ndt_probs, wall=wall)
-        return -np.sum(np.log(np.maximum(lik, _MIN_LIK)))
+    res = scipy.optimize.minimize(lambda t: objective(t)[0], x0, method="L-BFGS-B", bounds=lay.limits())
+    p = lay.unpack(res.x)
 
-    res = scipy.optimize.minimize(nll, x0, method="L-BFGS-B", bounds=limits)
-    p, ndt_probs = _unpack(res.x, n_groups, post_params, n_ndt)
-    cols = list(GROUP_PARAMS) + [f"{name}_post" for name in post_params]
+    cols = list(GROUP_PARAMS) + [f"{q}_post" for q in lay.post_params]
     table = pd.DataFrame({c: p[c] for c in cols})
     table.insert(0, "group", group_values)
-    table["n_trials"] = np.bincount(group_idx, minlength=n_groups)
-    # Post parameters are unconstrained for groups with no post-change-point positions.
-    has_post = np.bincount(group_idx, weights=post_mask.any(axis=1), minlength=n_groups) > 0
-    for name in post_params:
-        table.loc[~has_post, f"{name}_post"] = np.nan
+    table["n_trials"] = np.bincount(group_idx, minlength=G)
+    has_post = np.bincount(group_idx, weights=post_mask.any(axis=1), minlength=G) > 0
+    for q in lay.post_params:
+        table.loc[~has_post, f"{q}_post"] = np.nan
+    table["sensory_std"] = p["sensory_std"]
+    for v, pv in zip(ndt_values, p["ndt_probs"]):
+        table[f"ndt_p{v}"] = pv
+    lh = np.broadcast_to(p["log_h"], (G, len(knots)))
+    for ki, kn in enumerate(knots):
+        table[f"log_h_k{kn}"] = lh[:, ki]
     return {
         "params": table,
-        "ndt_probs": dict(zip(ndt_values, ndt_probs)),
-        "nll": float(res.fun),
+        "nll": float(objective(res.x)[1]),
         "n_trials": int(len(lens)),
         "n_params": int(len(res.x)),
         "success": bool(res.success),
@@ -367,12 +512,11 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(),
     }
 
 
-def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_mean, bound_std,
-                             guess_rate=0.0, lapse_rate=0.0, anticipation_rate=0.0,
-                             ndt_values=NDT_VALUES, ndt_probs=(1.0, 0.0, 0.0),
-                             change_point=0, generative_mean_post=None, bound_mean_post=None,
-                             bound_std_post=None, guess_rate_post=None,
-                             max_steps=200, wall=WALL, rng=None):
+def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_scale, bound_cv,
+                             guess_rate=0.0, lapse_rate=0.0, anticipation_rate=0.0, sensory_std=0.0,
+                             log_h=None, knots=KNOTS, ndt_values=NDT_VALUES, ndt_probs=(1.0, 0.0),
+                             change_point=0, generative_mean_post=None, bound_scale_post=None,
+                             guess_rate_post=None, max_steps=200, wall=WALL, rng=None):
     """
     Simulate trials from the stopping model (the generative model fit by fit_stopping_model).
 
@@ -381,21 +525,25 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     num_trials : int
     generative_mean, generative_std : float
         Step mean magnitude (sign drawn 50/50 per trial) and SD.
-    bound_mean, bound_std : float
-        Mean and SD of the per-trial gamma bound distribution (position units).
-    guess_rate, lapse_rate, anticipation_rate : float
+    bound_scale, bound_cv : float
+        Mean bound at the first knot (position units) and the coefficient of
+        variation of the per-trial bound multiplier.
+    guess_rate, lapse_rate, anticipation_rate, sensory_std : float
         See module docstring.
+    log_h : sequence or None
+        log h at the knots (first should be 0); None = flat.
+    knots : sequence of int
     ndt_values, ndt_probs : sequences
         NDT support and probabilities.
     change_point : int or (num_trials,) array
-        Position index from which post values apply (0 = no change point).
-        As in the task, the step that produces position ``change_point`` is
-        the first one drawn with ``generative_mean_post``.
-    generative_mean_post, bound_mean_post, bound_std_post, guess_rate_post : float or None
+        Position index from which post values apply (0 = none). As in the task,
+        the step that produces position ``change_point`` is the first drawn
+        with ``generative_mean_post``.
+    generative_mean_post, bound_scale_post, guess_rate_post : float or None
         Post-change-point values (None = same as pre).
     max_steps : int
         Walk length; trials with no commit by ``max_steps - max(ndt_values) - 1``
-        commit there (flagged ``commit_type = 'cap'``).
+        commit there (``commit_type = 'cap'``).
     wall : float
         Displayed positions are clamped to +/-wall, as in the task.
     rng : np.random.Generator or None
@@ -405,36 +553,30 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     pd.DataFrame with get_data_table-style columns ``steps``, ``RT``, ``choice``
     (0/1), ``correct``, ``change_point``, ``wall_hit``, plus ground truth:
     ``commit_step``, ``ndt``, ``commit_type`` ('anticipation', 'bound',
-    'guess', 'cap'), ``bound_pre`` (the trial's pre-change bound).
+    'guess', 'cap'), ``bound_multiplier``, ``lapse``.
     """
     if rng is None:
         rng = np.random.default_rng()
     n = int(num_trials)
     post = lambda v, d: d if v is None else v  # noqa: E731
-    gm_post = post(generative_mean_post, generative_mean)
     cp = np.broadcast_to(np.asarray(change_point, int), (n,))
     j = np.arange(max_steps + 1)[None, :]
     lpost = (cp[:, None] > 0) & (j >= cp[:, None])
 
-    # Walk: the move producing position j is column j-1, so it uses the post mean when j >= cp.
     sgn = rng.choice([-1.0, 1.0], n)
-    move_post = lpost[:, 1:]
-    means = np.where(move_post, gm_post, generative_mean) * sgn[:, None]
+    means = np.where(lpost[:, 1:], post(generative_mean_post, generative_mean), generative_mean) * sgn[:, None]
     walk = np.concatenate([np.zeros((n, 1)), np.cumsum(rng.normal(means, generative_std), axis=1)], axis=1)
     shown = np.clip(walk, -wall, wall)
-    ax = np.abs(shown)
+    perceived = shown + (rng.normal(0, sensory_std, shown.shape) if sensory_std > 0 else 0.0)
 
-    bm = np.where(lpost, post(bound_mean_post, bound_mean), bound_mean)
-    bs = np.where(lpost, post(bound_std_post, bound_std), bound_std)
+    lh = np.zeros(len(knots)) if log_h is None else np.asarray(log_h, float)
+    h = np.exp(np.interp(np.arange(max_steps + 1), knots, lh))[None, :]
+    theta = np.where(lpost, post(bound_scale_post, bound_scale), bound_scale) * h
+    mult = _gamma_ppf(rng.random(n), bound_cv)
+    hit_bound = np.abs(perceived) >= theta * mult[:, None]
     gr = np.where(lpost, post(guess_rate_post, guess_rate), guess_rate)
-
-    u = rng.random(n)
-    f = _gamma_cdf(ax, bm, bs)
-    f[:, 0] = 0.0
-    hit_bound = f >= u[:, None]
     hit_guess = rng.random((n, max_steps + 1)) < gr
-    hit_guess[:, 0] = False
-    hit_bound[:, 0] = False
+    hit_bound[:, 0] = hit_guess[:, 0] = False
 
     last = max_steps - max(ndt_values) - 1
     big = max_steps + 10
@@ -447,7 +589,7 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
 
     ndt = rng.choice(np.asarray(ndt_values), n, p=np.asarray(ndt_probs) / np.sum(ndt_probs))
     rows = np.arange(n)
-    side = np.sign(shown[rows, k])
+    side = np.sign(perceived[rows, k])
     lapse = rng.random(n) < lapse_rate
     rand_side = rng.choice([-1.0, 1.0], n)
     choice = np.where(lapse | (side == 0), rand_side, side)
@@ -470,7 +612,8 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
         "commit_step": k,
         "ndt": ndt,
         "commit_type": ctype,
-        "bound_pre": _gamma_ppf(u, bound_mean, bound_std),
+        "bound_multiplier": mult,
+        "lapse": lapse & ~lant,
     })
 
 
@@ -484,8 +627,7 @@ def _fit_one_subject(args):
     return subject, fit, None
 
 
-def fit_stopping_models(data_table, group_col="block_index", post_params=(), ndt_values=NDT_VALUES,
-                        wall=WALL, max_workers=None):
+def fit_stopping_models(data_table, max_workers=None, **kwargs):
     """
     Fit the stopping model separately to every subject in a data table.
 
@@ -493,23 +635,23 @@ def fit_stopping_models(data_table, group_col="block_index", post_params=(), ndt
     ----------
     data_table : pd.DataFrame
         Selected trials (``subject_index``, ``steps``, ``choice``, optional
-        ``change_point``, and ``group_col``).
-    group_col, post_params, ndt_values, wall
-        Passed to fit_stopping_model.
+        ``change_point``, and the grouping column).
     max_workers : int or None
         Processes for the per-subject fits (None = all cores; 1 = no pool).
+    **kwargs
+        Passed to fit_stopping_model (group_col, post_params, time_course,
+        knots, ndt_values, fixed, smooth_penalty, n_quad, wall).
 
     Returns
     -------
-    pd.DataFrame, one row per (subject, group): ``subject_index``, ``group``,
-    the natural-scale parameters, ``n_trials``, ``ndt_p<v>`` for each NDT value,
-    and per-subject ``nll``, ``n_params``, ``success``, ``error`` (message if
-    the fit raised; such subjects have NaN parameters and are never dropped).
+    pd.DataFrame, one row per (subject, group): ``subject_index`` plus
+    fit_stopping_model's ``params`` columns, and per-subject ``nll``,
+    ``n_params``, ``success``, ``error`` (message if the fit raised; such
+    subjects have NaN parameters and are never dropped).
     """
-    kwargs = dict(group_col=group_col, post_params=post_params, ndt_values=ndt_values, wall=wall)
     jobs = [(s, g, kwargs) for s, g in data_table.groupby("subject_index")]
     if max_workers == 1:
-        results = [_fit_one_subject(j) for j in jobs]
+        results = [_fit_one_subject(job) for job in jobs]
     else:
         from concurrent.futures import ProcessPoolExecutor
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
@@ -522,15 +664,14 @@ def fit_stopping_models(data_table, group_col="block_index", post_params=(), ndt
             continue
         t = fit["params"].copy()
         t.insert(0, "subject_index", subject)
-        for v, p in fit["ndt_probs"].items():
-            t[f"ndt_p{v}"] = p
         t["nll"], t["n_params"], t["success"], t["error"] = fit["nll"], fit["n_params"], fit["success"], None
         rows.append(t)
     return pd.concat(rows, ignore_index=True)
 
 
 def simulate_stopping_data_table(data_table, fits, group_col="block_index", post_generative_mean=None,
-                                 ndt_values=NDT_VALUES, num_reps=1, max_steps=200, wall=WALL, rng=None):
+                                 knots=KNOTS, ndt_values=NDT_VALUES, num_reps=1, max_steps=200,
+                                 wall=WALL, rng=None):
     """
     Simulate each subject's trials from their fitted stopping-model parameters.
 
@@ -542,7 +683,7 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
     ----------
     data_table : pd.DataFrame
         The trials the fits were made on (``subject_index``, ``group_col``,
-        ``snr``, ``step_std``, optional ``change_point``, ``block_index``).
+        ``snr``, ``step_std``, ``block_index``, optional ``change_point``).
     fits : pd.DataFrame
         Output of fit_stopping_models.
     group_col : str
@@ -550,7 +691,8 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
     post_generative_mean : dict or None
         {block_index: post-change step mean magnitude} for change-point
         blocks; required if any trial has a change point.
-    ndt_values : sequence of int
+    knots, ndt_values : sequences
+        Must match the fits.
     num_reps : int
     max_steps, wall : see simulate_stopping_trials.
     rng : np.random.Generator or None
@@ -570,7 +712,7 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
     for (subject, group, block, mean, std), cell in d.groupby(
             ["subject_index", group_col, "block_index", "_mean", "step_std"]):
         f = fits.loc[(subject, group)]
-        if not np.isfinite(f["bound_mean"]):
+        if not np.isfinite(f["bound_scale"]):
             continue
         cps = np.tile(cell["_cp"].to_numpy(), num_reps)
         post = {}
@@ -580,8 +722,9 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
                 if f"{name}_post" in f and np.isfinite(f[f"{name}_post"]):
                     post[f"{name}_post"] = f[f"{name}_post"]
         sim = simulate_stopping_trials(
-            len(cps), mean, std, f["bound_mean"], f["bound_std"], f["guess_rate"], f["lapse_rate"],
-            f["anticipation_rate"], ndt_values=ndt_values,
+            len(cps), mean, std, f["bound_scale"], f["bound_cv"], f["guess_rate"], f["lapse_rate"],
+            f["anticipation_rate"], f["sensory_std"],
+            log_h=[f[f"log_h_k{kn}"] for kn in knots], knots=knots, ndt_values=ndt_values,
             ndt_probs=[f[f"ndt_p{v}"] for v in ndt_values], change_point=cps,
             max_steps=max_steps, wall=wall, rng=rng, **post)
         sim.insert(0, "subject_index", subject)
