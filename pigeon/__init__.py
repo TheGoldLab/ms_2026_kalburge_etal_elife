@@ -16,6 +16,11 @@ simulation
     an absorbing bound, NDT, and optional lapse rate.  Can reproduce a full
     data-table in the same format as `get_data_table`.
 
+stopping
+    Trial-level stopping model (variable bound + guesses + anticipations +
+    choice lapses, NDT marginalized) fit to each trial's full path; used by
+    Test_stoppingModel to estimate guessing and test change-point shifts.
+
 adaptation
     Within-block adaptation time-constant (tau) fits, shared by
     Figure04_RRvsBound (source of the tau insets in panels D-F) and any
@@ -40,6 +45,9 @@ load_cp_rr_mats         Load RRMats.mat, verifying it matches the data's CP desi
 simulate_trials         Core simulation engine (returns raw arrays).
 get_simulated_data_table Full simulated data table matching get_data_table format.
 get_adaptation_tau_fits Per-subject/block adaptation tau fits (Figure04 pipeline).
+fit_stopping_model      Maximum-likelihood fit of the stopping model to one subject.
+simulate_stopping_trials Simulate trials from the stopping model.
+stopping_model_nll      Negative log-likelihood under given stopping-model parameters.
 """
 
 from .data import (
@@ -49,3 +57,4 @@ from .data import (
 )
 from .simulation import simulate_trials, get_simulated_data_table
 from .adaptation import get_adaptation_tau_fits
+from .stopping import fit_stopping_model, simulate_stopping_trials, stopping_model_nll
