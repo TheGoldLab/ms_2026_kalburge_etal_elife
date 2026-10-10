@@ -27,7 +27,9 @@ position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
    (constant outside them) with ``h(anchor) = 1``, so ``bound_scale`` is the
    mean bound at the anchor step (default 6). ``h`` is shared by
    all of a subject's groups (``time_course='shared'``, the default), separate
-   per group (``'per_group'``), or flat (``'flat'``). On change-point trials, positions
+   per group (``'per_group'``), flat (``'flat'``), or separate per value of
+   another column (``time_course_col``, e.g. one shape per SNR while the
+   other parameters stay per block). On change-point trials, positions
    j >= change_point use ``bound_scale_post`` (if fit).
 3. **Sensory noise.** The subject sees ``y_j = x_j + e_j`` with independent
    ``e_j ~ N(0, sensory_std^2)``, and commits at the first j >= 1 with
@@ -306,7 +308,7 @@ def _pad_steps(steps_list):
 
 
 def _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values, ndt_probs,
-                      n_quad=24, wall=WALL, n_buckets=4, return_parts=False):
+                      n_quad=24, wall=WALL, n_buckets=4, return_parts=False, shape_idx=None):
     """
     Per-trial likelihood, computed in length buckets.
 
@@ -324,12 +326,13 @@ def _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_va
         L = int(lens[idx].max())
         out[:, idx] = _trial_likelihood_padded(
             x[idx, :L], lens[idx], choice_pm[idx], group_idx[idx], post_mask[idx, :L], p, knots,
-            ndt_values, ndt_probs, n_quad=n_quad, wall=wall, return_parts=True)
+            ndt_values, ndt_probs, n_quad=n_quad, wall=wall, return_parts=True,
+            shape_idx=None if shape_idx is None else shape_idx[idx])
     return out if return_parts else out[0]
 
 
 def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values, ndt_probs,
-                             n_quad=24, wall=WALL, return_parts=False):
+                             n_quad=24, wall=WALL, return_parts=False, shape_idx=None):
     """
     Per-trial likelihood of (RT, choice) under the stopping model.
 
@@ -351,6 +354,10 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         with n_shapes 1 or n_groups, scalar ``sensory_std``.
     knots, ndt_values, ndt_probs, n_quad, wall
         See module docstring.
+    shape_idx : (n,) int array or None
+        Index into the time-course shapes per trial (fit_stopping_model's
+        ``time_course_col``); None = shape per group if there are several,
+        else the single shape.
 
     Returns
     -------
@@ -382,7 +389,8 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         log_h = _knee_log_h(p["log_h_start"], p["knee"], p["late_slope"], np.arange(L))
     else:
         log_h = _log_h(p["log_h"], knots, L)
-    shape_idx = group_idx if log_h.shape[0] > 1 else np.zeros(n, int)
+    if shape_idx is None:
+        shape_idx = group_idx if log_h.shape[0] > 1 else np.zeros(n, int)
     scale = np.where(post_mask, np.asarray(p["bound_scale_post"])[group_idx][:, None],
                      np.asarray(p["bound_scale"])[group_idx][:, None])
     theta = scale * np.exp(log_h[shape_idx])                                  # (n, L)
@@ -488,13 +496,15 @@ class _Layout:
     """Bookkeeping between the transformed parameter vector and named parameters."""
 
     def __init__(self, n_groups, post_params, n_ndt, time_course, n_knots, fixed, shared_params=(), anchor_idx=0,
-                 guess_time_course="flat", time_course_form="knots"):
+                 guess_time_course="flat", time_course_form="knots", n_tc_groups=None):
         self.n_groups, self.n_ndt, self.time_course = n_groups, n_ndt, time_course
         self.knee = time_course_form == "knee" and time_course != "flat"
         self.post_params = tuple(q for q in POST_PARAMS if q in post_params)
         self.fixed = dict(fixed or {})
         self.shared = tuple(q for q in GROUP_PARAMS if q in shared_params)
         self.n_shapes = {"flat": 0, "shared": 1, "per_group": n_groups}[time_course]
+        if n_tc_groups is not None:
+            self.n_shapes = n_tc_groups
         self.n_gshapes = {"flat": 0, "shared": 1, "per_group": n_groups}[guess_time_course]
         self.n_free_h = n_knots - 1
         self.anchor_idx = anchor_idx
@@ -609,7 +619,8 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
 def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="shared",
                        shared_params=SHARED_PARAMS, knots=KNOTS, ndt_values=NDT_VALUES, fixed=None,
                        smooth_penalty=2.0, anchor=ANCHOR, n_quad=24, wall=WALL, x0=None,
-                       max_evals=200_000, guess_time_course="flat", time_course_form="knee"):
+                       max_evals=200_000, guess_time_course="flat", time_course_form="knee",
+                       time_course_col=None):
     """
     Maximum-likelihood fit of the stopping model to one subject's trials.
 
@@ -674,6 +685,15 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         (10 * late_slope)**2)`` (prior SD 0.5 on the early change and on the
         change over 10 late steps); the knee is unpenalized. Fix the late
         slope with ``fixed={'late_slope': 0.0}`` for a flat bound after the knee.
+    time_course_col : str or None
+        Column whose values get separate time-course shapes, independent of
+        ``group_col`` (e.g. one shape per SNR while scale, CV and rates stay
+        per block; a group may then mix shapes, as in mixed-SNR blocks).
+        Overrides ``time_course`` ('flat' is not allowed). The output then
+        has one row per (group, time-course value) present, with a
+        ``time_course_group`` column; group parameters repeat across a
+        group's rows, ``n_trials`` counts that row's trials. Such tables are
+        for inspecting the fit (simulation and trial-level helpers reject them).
 
     Returns
     -------
@@ -704,9 +724,15 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     G = len(group_values)
     if anchor not in knots:
         raise ValueError(f"anchor {anchor} must be one of the knots {tuple(knots)}.")
+    tc_values, tc_idx = None, None
+    if time_course_col is not None:
+        if time_course == "flat":
+            raise ValueError("time_course_col needs a bound time course (time_course != 'flat').")
+        tc_values, tc_idx = np.unique(np.asarray(data_table[time_course_col]), return_inverse=True)
     lay = _Layout(G, post_params, len(ndt_values), time_course, len(knots), fixed, shared_params,
                   anchor_idx=list(knots).index(anchor), guess_time_course=guess_time_course,
-                  time_course_form=time_course_form)
+                  time_course_form=time_course_form,
+                  n_tc_groups=None if tc_values is None else len(tc_values))
 
     if x0 is None:
         k = np.clip(lens - 2, 0, x.shape[1] - 1)
@@ -732,7 +758,7 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     def objective(theta):
         p = lay.unpack(theta)
         lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values,
-                                p["ndt_probs"], n_quad=n_quad, wall=wall)
+                                p["ndt_probs"], n_quad=n_quad, wall=wall, shape_idx=tc_idx)
         nll = -np.sum(np.log(np.maximum(lik, _MIN_LIK)))
         if lay.knee:
             tc_pen = np.sum(p["log_h_start"] ** 2) + np.sum((10 * p["late_slope"]) ** 2)
@@ -755,17 +781,29 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     table["sensory_std"] = p["sensory_std"]
     for v, pv in zip(ndt_values, p["ndt_probs"]):
         table[f"ndt_p{v}"] = pv
-    lh = np.broadcast_to(p["log_h"], (G, len(knots)))
     lg = np.broadcast_to(p["log_g"], (G, len(knots)))
-    if lay.knee:
+    if tc_values is not None:
+        pass   # shapes are attached per (group, time-course value) row below
+    elif lay.knee:
         for name in KNEE_PARAMS:
             table[name] = np.broadcast_to(p[name], (G,))
-    for ki, kn in enumerate(knots):
-        if lay.knee:
-            break
-        table[f"log_h_k{kn}"] = lh[:, ki]
+    else:
+        lh = np.broadcast_to(p["log_h"], (G, len(knots)))
+        for ki, kn in enumerate(knots):
+            table[f"log_h_k{kn}"] = lh[:, ki]
     for ki, kn in enumerate(knots):
         table[f"log_g_k{kn}"] = lg[:, ki]
+    if tc_values is not None:
+        # One row per (group, time-course value) present, carrying that shape.
+        pairs = pd.DataFrame({"g": group_idx, "s": tc_idx}).value_counts().sort_index()
+        gi, si = (pairs.index.get_level_values(c).to_numpy() for c in ("g", "s"))
+        table = table.iloc[gi].reset_index(drop=True)
+        table.insert(1, "time_course_group", tc_values[si])
+        table["n_trials"] = pairs.to_numpy()
+        shape_cols = list(KNEE_PARAMS) if lay.knee else [f"log_h_k{kn}" for kn in knots]
+        shapes = (np.stack([p[c] for c in KNEE_PARAMS], axis=1) if lay.knee
+                  else np.broadcast_to(p["log_h"], (lay.n_shapes, len(knots))))
+        table[shape_cols] = pd.DataFrame(shapes[si], columns=shape_cols)
     return {
         "params": table,
         "nll": float(objective(res.x)[1]),
@@ -895,6 +933,8 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
 
 def _params_from_fits(fit_rows, knots=KNOTS):
     """Natural-scale parameter dict (stopping_model_nll format) from one subject's fit rows, sorted by group."""
+    if "time_course_group" in fit_rows:
+        raise ValueError("Fits with time_course_col (one row per group x time-course value) are not supported here.")
     f = fit_rows.sort_values("group")
     params = {name: f[name].to_numpy(float) for name in GROUP_PARAMS}
     for name in POST_PARAMS:
@@ -1054,6 +1094,8 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
     pd.DataFrame from simulate_stopping_trials plus ``subject_index``,
     ``group_col``, ``block_index``, ``snr`` (abs), ``rep``.
     """
+    if "time_course_group" in fits:
+        raise ValueError("Fits with time_course_col (one row per group x time-course value) are not supported here.")
     if rng is None:
         rng = np.random.default_rng()
     d = data_table.copy()

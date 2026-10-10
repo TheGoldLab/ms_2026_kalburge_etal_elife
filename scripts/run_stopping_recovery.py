@@ -12,7 +12,9 @@ anticipation rates per block; time course, sensory noise and NDT shared):
 
 True parameters are drawn over plausible ranges: per block for the bound
 scale and CV and the three rates; per subject for sensory noise, NDT and the
-time course (a random log-linear collapse or increase through the knots).
+knee-form time course (log_h_start -0.2 to 1.2, i.e. a step-1 bound 0.8-3.3x
+the plateau; knee at step 1.5-8; late slope -0.05 to +0.01 per step, which
+spans the fitted OL/MX ranges).
 
 Writes data/processed/stopping_recovery.pkl (one row per subject x block) for
 notebooks/Test_stoppingModel.ipynb. Run from the project root:
@@ -27,7 +29,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pigeon.stopping import ANCHOR, KNOTS, fit_stopping_model, simulate_stopping_trials
+from pigeon.stopping import fit_stopping_model, simulate_stopping_trials
 
 OUT = Path("data/processed/stopping_recovery.pkl")
 STEP_STD = 0.15
@@ -45,9 +47,8 @@ def make_subject(task, seed):
     rng = np.random.default_rng(seed)
     sensory_std = rng.uniform(0.0, 0.12)
     p1 = rng.uniform(0.4, 0.95)
-    ramp = (np.array(KNOTS) - ANCHOR) / (KNOTS[-1] - KNOTS[0])   # 0 at the anchor
-    log_h = rng.uniform(-0.8, 0.4) * ramp
-    shared = dict(sensory_std=sensory_std, log_h_first=log_h[0], log_h_last=log_h[-1])
+    knee_shape = (rng.uniform(-0.2, 1.2), rng.uniform(1.5, 8.0), rng.uniform(-0.05, 0.01))
+    shared = dict(sensory_std=sensory_std, **dict(zip(("log_h_start", "knee", "late_slope"), knee_shape)))
     parts, truth = [], {}
     for block, (n, means) in DESIGNS[task].items():
         b = dict(bound_scale=rng.uniform(0.15, 0.6), bound_cv=rng.uniform(0.15, 0.6),
@@ -55,7 +56,7 @@ def make_subject(task, seed):
                  anticipation_rate=rng.uniform(0.0, 0.1))
         sizes = np.diff(np.round(np.linspace(0, n, len(means) + 1)).astype(int))
         for m, k in zip(means, sizes):
-            d = simulate_stopping_trials(k, m, STEP_STD, log_h=log_h, ndt_probs=(p1, 1 - p1), rng=rng,
+            d = simulate_stopping_trials(k, m, STEP_STD, knee_shape=knee_shape, ndt_probs=(p1, 1 - p1), rng=rng,
                                          sensory_std=sensory_std, **b)
             d["snr"] = m / STEP_STD
             parts.append(d.assign(block_index=block))
@@ -78,7 +79,7 @@ def job(args):
             **{f"true_{k}": v for k, v in tb.items()}, **{f"true_{k}": v for k, v in shared.items()},
             true_ndt_p1=p1,
             **{f"fit_{k}": fb[k] for k in PER_BLOCK}, fit_sensory_std=fb.sensory_std,
-            fit_log_h_first=fb[f"log_h_k{KNOTS[0]}"], fit_log_h_last=fb[f"log_h_k{KNOTS[-1]}"],
+            fit_log_h_start=fb.log_h_start, fit_knee=fb.knee, fit_late_slope=fb.late_slope,
             fit_ndt_p1=fb.ndt_p1))
     return rows
 

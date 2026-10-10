@@ -13,8 +13,10 @@ Run from the project root, detached:
 
     nohup uv run python scripts/run_stopping_fits.py [variant ...] > data/processed/stopping_fits.log 2>&1 &
 
-Variants (default: main). Variants other than main/knots/knee were last fit
-with the knots time course; refitting them now uses the knee form.
+Variants (default: main). flat, flat_guess_tc, both_tc, knee_flat and
+mx_by_snr_knots were last fit with the knots form (2026-10-10, before the knee
+became the default); refitting them now uses the knee form. Older fits of
+refit variants are archived in data/processed/stopping_fits_round3_knots/.
 
 Variants:
     main            bound scale and CV, guess, lapse and anticipation rates per
@@ -35,6 +37,9 @@ Variants:
     mx_by_snr       MX only: every per-block parameter separate per block x SNR
                     (groups 'B<block>_lo' / 'B<block>_hi'), to test whether
                     mixed-SNR subjects set different bounds by SNR (Figure 5)
+    tc_by_snr       as main but one time-course shape per SNR (column
+                    'snr_level', lo/hi; OL blocks 1-3 vs 4-6, MX trials by
+                    SNR within the mixed blocks)
 """
 
 import sys
@@ -61,6 +66,7 @@ VARIANTS = {
     "knee": {"time_course_form": "knee"},
     "knee_flat": {"time_course_form": "knee", "fixed": {"late_slope": 0.0}},
     "mx_by_snr": {"group_col": "condition_snr", "tasks": ["MX"]},
+    "tc_by_snr": {"time_course_col": "snr_level"},
 }
 
 
@@ -73,7 +79,8 @@ def main(variants):
     for d in tables.values():
         # Lowest |snr| in the dataset is 'lo'; OL raw blocks have one SNR each.
         lo = np.isclose(d["snr"].abs(), d["snr"].abs().min())
-        d["condition_snr"] = d["condition"] + np.where(lo, "_lo", "_hi")
+        d["snr_level"] = np.where(lo, "lo", "hi")
+        d["condition_snr"] = d["condition"] + "_" + d["snr_level"]
     for variant in variants:
         kwargs = dict(VARIANTS[variant])
         tasks = kwargs.pop("tasks", list(tables))

@@ -149,6 +149,23 @@ def test_fit_recovers_knee_time_course():
         atol=0.04)
 
 
+def test_fit_recovers_time_course_per_column_within_a_mixed_group():
+    # One block (one set of scale/CV/rates) with trials from two SNRs that differ only in time-course shape.
+    lo = _sim(3000, 0.02, 15, knee_shape=(0.9, 4.0, -0.01)).assign(snr_level="lo")
+    hi = _sim(3000, 0.04, 16, knee_shape=(0.2, 2.5, -0.03)).assign(snr_level="hi")
+    d = pd.concat([lo, hi], ignore_index=True).assign(condition="B1")
+    r = fit_stopping_model(d, group_col="condition", time_course_col="snr_level", smooth_penalty=0.0)
+    t = r["params"].set_index("time_course_group")
+    assert r["success"] and list(t.index) == ["hi", "lo"]
+    assert (t["n_trials"] == 3000).all() and t["bound_scale"].nunique() == 1
+    assert r["n_params"] == 5 + 1 + 1 + 2 * 3
+    assert abs(t.loc["lo", "log_h_start"] - 0.9) < 0.3 and abs(t.loc["hi", "log_h_start"] - 0.2) < 0.3
+    assert abs(t.loc["lo", "knee"] - 4.0) < 1.2
+    with pytest.raises(ValueError):
+        get_commit_type_probabilities(d.assign(subject_index=1), r["params"].assign(subject_index=1),
+                                      group_col="condition")
+
+
 def test_commit_type_probabilities_are_calibrated():
     d = _sim(6000, 0.02, 14, guess_rate=0.06, log_h=COLLAPSE).assign(subject_index=1, condition="B1")
     fit = pd.DataFrame([{"subject_index": 1, "group": "B1", **TRUE, "guess_rate": 0.06,
