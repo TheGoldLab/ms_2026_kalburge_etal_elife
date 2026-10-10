@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, simulate_stopping_trials,
-                             stopping_model_nll)
+from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_effective_bounds,
+                             simulate_stopping_trials, stopping_model_nll)
 
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
             sensory_std=0.02)
@@ -105,3 +105,13 @@ def test_shared_and_per_block_parameters():
     assert p["guess_rate"].nunique() == 1 and p["lapse_rate"].nunique() == 1
     assert p["bound_scale"].nunique() == 2
     assert r["n_params"] == 2 * 2 + 3 + 1 + 1   # scale, cv per block; 3 rates; noise; NDT
+
+
+def test_effective_bounds_match_time_course():
+    fit = {"subject_index": 1, "group": "B1", "bound_scale": 0.2, "ndt_p1": 0.7, "ndt_p2": 0.3,
+           **{f"log_h_k{k}": v for k, v in zip(KNOTS, COLLAPSE)}}
+    d = pd.DataFrame({"subject_index": 1, "condition": "B1", "RT": [2, 5, 9, 30]})
+    got = get_effective_bounds(d, pd.DataFrame([fit]))
+    want = [0.7 * bound_time_course(fit, [max(rt - 2, 1)])[0] + 0.3 * bound_time_course(fit, [max(rt - 3, 1)])[0]
+            for rt in d.RT]
+    assert np.allclose(got, want)

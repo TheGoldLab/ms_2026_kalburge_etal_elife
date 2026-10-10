@@ -90,7 +90,7 @@ import scipy.optimize
 import scipy.special
 import scipy.stats
 
-from .data import WALL, get_bounds, get_data_table
+from .data import WALL, apply_bias_corrections, get_bounds, get_data_table, get_good_trial_array
 
 NDT_VALUES = (1, 2)
 KNOTS = (1, 6, 16)
@@ -146,6 +146,91 @@ def bound_time_course(fit_row, steps, knots=KNOTS, post=False):
     scale = fit_row["bound_scale_post" if post else "bound_scale"]
     lh = [fit_row.get(f"log_h_k{k}", 0.0) for k in knots]
     return scale * np.exp(np.interp(np.asarray(steps), knots, lh))
+
+
+def get_effective_bounds(data_table, fits, group_col="condition", knots=KNOTS, ndt_values=NDT_VALUES):
+    """
+    Fitted mean bound at each trial's commit step, averaged over the fitted NDT.
+
+    For a trial with response time RT the commit step is ``RT - ndt - 1``
+    (clipped to >= 1); the result is ``sum_ndt P(ndt) * theta(RT - ndt - 1)``.
+    Averaged over a subject's trials this is the model's counterpart of a
+    mean measured bound: it weights the time course by when that subject
+    actually responded.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Trials with ``subject_index``, ``group_col`` and ``RT``.
+    fits : pd.DataFrame
+        Output of fit_stopping_models (``group`` matches ``group_col``).
+    group_col : str
+    knots, ndt_values : sequences
+        Must match the fits.
+
+    Returns
+    -------
+    pd.Series (index of data_table); NaN for trials without a fit.
+    """
+    cols = ["bound_scale"] + [f"log_h_k{k}" for k in knots] + [f"ndt_p{n}" for n in ndt_values]
+    f = data_table[["subject_index", group_col, "RT"]].merge(
+        fits[["subject_index", "group"] + cols], left_on=["subject_index", group_col],
+        right_on=["subject_index", "group"], how="left")
+    lh = f[[f"log_h_k{k}" for k in knots]].to_numpy()
+    out = np.zeros(len(f))
+    for ndt in ndt_values:
+        j = np.clip(f["RT"].to_numpy() - ndt - 1, 1, None)
+        # Piecewise-linear interpolation of log h, row by row, without a Python loop.
+        seg = np.clip(np.searchsorted(knots, j, side="right") - 1, 0, len(knots) - 2)
+        k0, k1 = np.asarray(knots)[seg], np.asarray(knots)[seg + 1]
+        w = np.clip((j - k0) / (k1 - k0), 0.0, 1.0)
+        rows = np.arange(len(f))
+        log_h = (1 - w) * lh[rows, seg] + w * lh[rows, seg + 1]
+        out += f[f"ndt_p{ndt}"].to_numpy() * f["bound_scale"].to_numpy() * np.exp(log_h)
+    return pd.Series(out, index=data_table.index)
+
+
+def get_fit_vs_median_bounds(data_table, fits, bias_file, group_col="condition", knots=KNOTS,
+                             ndt_values=NDT_VALUES):
+    """
+    Per subject x group: fitted bounds next to the paper's median |bound|.
+
+    The median |bound| uses the paper's standard trial set
+    (``get_good_trial_array``: DT >= 2, trial_number >= 10, no wall hit, RT
+    cutoff; plus a finite, nonzero bound), on raw positions and after
+    ``apply_bias_corrections``. The fitted bound is the mean of
+    ``get_effective_bounds`` over the same trials, plus ``bound_scale`` (the
+    mean bound at the anchor step).
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        get_data_table(..., correct_bias=None) output (or infer_bounds_like_data
+        output for simulated trials), with ``group_col``.
+    fits : pd.DataFrame
+        Output of fit_stopping_models.
+    bias_file : str or Path
+        Calibration file for apply_bias_corrections.
+    group_col, knots, ndt_values
+        As in get_effective_bounds.
+
+    Returns
+    -------
+    pd.DataFrame with ``subject_index``, ``group``, ``n_trials``, ``median_raw``,
+    ``median_corrected``, ``bound_scale``, ``effective_bound``.
+    """
+    lg = get_good_trial_array(data_table) & np.isfinite(data_table["bound"]) & (data_table["bound"] != 0)
+    d = data_table[lg].copy()
+    d["abs_bound_corrected"] = apply_bias_corrections(d, str(bias_file))["abs_bound"]
+    d["effective_bound"] = get_effective_bounds(d, fits, group_col, knots, ndt_values)
+    d["abs_bound"] = d["bound"].abs()
+    g = d.groupby(["subject_index", group_col])
+    out = pd.DataFrame({"n_trials": g.size(),
+                        "median_raw": g.abs_bound.median(),
+                        "median_corrected": g.abs_bound_corrected.median(),
+                        "effective_bound": g.effective_bound.mean()}).reset_index()
+    out = out.rename(columns={group_col: "group"})
+    return out.merge(fits[["subject_index", "group", "bound_scale"]], on=["subject_index", "group"], how="left")
 
 
 def _pad_steps(steps_list):
