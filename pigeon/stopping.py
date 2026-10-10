@@ -894,7 +894,9 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
             len(cps), mean, std, f["bound_scale"], f["bound_cv"], f["guess_rate"], f["lapse_rate"],
             f["anticipation_rate"], f["sensory_std"],
             log_h=[f[f"log_h_k{kn}"] for kn in knots], knots=knots, ndt_values=ndt_values,
-            log_g=[f[f"log_g_k{kn}"] for kn in knots] if f"log_g_k{knots[0]}" in f else None,
+            # Fits made without a guess time course have no (or NaN) log_g columns: constant guessing.
+            log_g=([f[f"log_g_k{kn}"] for kn in knots]
+                   if np.isfinite(f.get(f"log_g_k{knots[0]}", np.nan)) else None),
             ndt_probs=[f[f"ndt_p{v}"] for v in ndt_values], change_point=cps,
             max_steps=max_steps, wall=wall, rng=rng, **post)
         sim.insert(0, "subject_index", subject)
