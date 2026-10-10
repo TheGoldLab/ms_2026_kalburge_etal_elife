@@ -22,9 +22,9 @@ position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
    ``bound_scale * h(j)``, where ``log h`` is piecewise linear in j through
    ``knots`` (constant outside them) with ``h(anchor) = 1``; so
    ``bound_scale`` is the mean bound at the anchor step (default 6, about the
-   median commit step, where the level is best determined). ``h`` is separate per
-   group (``time_course='per_group'``, the default), shared by all of a
-   subject's groups (``'shared'``), or flat (``'flat'``). On change-point trials, positions
+   median commit step, where the level is best determined). ``h`` is shared by
+   all of a subject's groups (``time_course='shared'``, the default), separate
+   per group (``'per_group'``), or flat (``'flat'``). On change-point trials, positions
    j >= change_point use ``bound_scale_post`` (if fit).
 3. **Sensory noise.** The subject sees ``y_j = x_j + e_j`` with independent
    ``e_j ~ N(0, sensory_std^2)``, and commits at the first j >= 1 with
@@ -65,12 +65,13 @@ probabilities and biases NDT and the bound upward.)
 Fitting
 -------
 ``fit_stopping_model`` maximizes the penalized likelihood over all trials of
-one subject with L-BFGS-B on transformed scales. By default every bound
-parameter is per group (``bound_scale``, ``bound_cv``, the time-course knots,
-and any ``post_params``) and everything else is shared by the subject's
-groups (``guess_rate``, ``lapse_rate``, ``anticipation_rate``,
-``sensory_std``, the NDT probabilities); ``shared_params`` and
-``time_course`` change that. A penalty on adjacent differences of ``log h``
+one subject with L-BFGS-B on transformed scales. By default ``bound_scale``,
+``bound_cv``, ``guess_rate``, ``lapse_rate``, ``anticipation_rate`` (and any
+``post_params``) are per group, and the bound's time-course shape,
+``sensory_std`` and the NDT probabilities are shared by the subject's groups
+(the split chosen by model comparison on OL/MX; see
+notebooks/Test_stoppingModel.ipynb); ``shared_params`` and ``time_course``
+change that. A penalty on adjacent differences of ``log h``
 (``smooth_penalty``; Gaussian prior SD ``1/sqrt(2 * smooth_penalty)`` on each
 log change, 0.5 by default) keeps the time course near flat unless the data
 say otherwise: with ~50-150 trials per block, an unpenalized per-block curve
@@ -95,7 +96,7 @@ KNOTS = (1, 6, 16)
 ANCHOR = 6   # knot where h = 1, so bound_scale is the mean bound there
 GROUP_PARAMS = ("bound_scale", "bound_cv", "guess_rate", "lapse_rate", "anticipation_rate")
 POST_PARAMS = ("bound_scale", "guess_rate")
-SHARED_PARAMS = ("guess_rate", "lapse_rate", "anticipation_rate")
+SHARED_PARAMS = ()   # default: every per-group parameter is separate per group
 TIME_COURSES = ("flat", "shared", "per_group")
 
 # Optimizer limits on the transformed scales.
@@ -412,9 +413,10 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
     return float(-np.sum(np.log(np.maximum(lik, _MIN_LIK))))
 
 
-def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="per_group",
+def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="shared",
                        shared_params=SHARED_PARAMS, knots=KNOTS, ndt_values=NDT_VALUES, fixed=None,
-                       smooth_penalty=2.0, anchor=ANCHOR, n_quad=24, wall=WALL, x0=None):
+                       smooth_penalty=2.0, anchor=ANCHOR, n_quad=24, wall=WALL, x0=None,
+                       max_evals=200_000):
     """
     Maximum-likelihood fit of the stopping model to one subject's trials.
 
@@ -431,11 +433,14 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         Subset of POST_PARAMS with separate post-change-point values.
     time_course : {'flat', 'shared', 'per_group'}
         Bound time course across steps (see module docstring). Default
-        'per_group': every bound parameter is separate per group.
+        'shared': one shape per subject (OL/MX model comparison: per-group
+        shapes fit worse by AIC and are poorly recoverable at 33-150 trials
+        per block).
     shared_params : sequence of str
         Subset of GROUP_PARAMS with one value shared by all groups. Default
-        SHARED_PARAMS (guess, lapse and anticipation rates): bound parameters
-        per group, everything else shared (sensory noise and NDT always are).
+        none: bound scale and CV, guess, lapse and anticipation rates are all
+        per group (OL/MX: sharing the three rates is strongly rejected,
+        dAIC +12,000 OL, +1,000 MX). Sensory noise and NDT are always shared.
     knots : sequence of int
         Steps at which log h is free (the first is fixed at 0).
     ndt_values : sequence of int
@@ -454,6 +459,11 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         Screen-edge position (see module docstring on wall-hit trials).
     x0 : array or None
         Starting point on the transformed scale; default is data-driven.
+    max_evals : int
+        Limit on objective evaluations (and iterations) for L-BFGS-B. With
+        finite-difference gradients each iteration costs n_params + 1
+        evaluations, so scipy's default (15,000) stops 40+-parameter fits
+        after ~330 iterations, before convergence.
 
     Returns
     -------
@@ -508,7 +518,8 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         nll = -np.sum(np.log(np.maximum(lik, _MIN_LIK)))
         return nll + smooth_penalty * np.sum(np.diff(p["log_h"], axis=1) ** 2), nll
 
-    res = scipy.optimize.minimize(lambda t: objective(t)[0], x0, method="L-BFGS-B", bounds=lay.limits())
+    res = scipy.optimize.minimize(lambda t: objective(t)[0], x0, method="L-BFGS-B", bounds=lay.limits(),
+                                  options={"maxfun": max_evals, "maxiter": max_evals})
     p = lay.unpack(res.x)
 
     cols = list(GROUP_PARAMS) + [f"{q}_post" for q in lay.post_params]
@@ -687,7 +698,8 @@ def fit_stopping_models(data_table, max_workers=None, **kwargs):
             continue
         t = fit["params"].copy()
         t.insert(0, "subject_index", subject)
-        t["nll"], t["n_params"], t["success"], t["error"] = fit["nll"], fit["n_params"], fit["success"], None
+        t["nll"], t["n_params"], t["success"], t["message"], t["error"] = (
+            fit["nll"], fit["n_params"], fit["success"], fit["message"], None)
         rows.append(t)
     return pd.concat(rows, ignore_index=True)
 

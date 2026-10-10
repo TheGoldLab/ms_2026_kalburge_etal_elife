@@ -92,10 +92,14 @@ def test_fit_rejects_missing_choices():
 
 
 def test_shared_and_per_block_parameters():
-    # Default: bound parameters per block, guess/lapse/anticipation shared.
     d = pd.concat([_sim(400, 0.01, 10, bound_scale=0.25).assign(block_index=1),
                    _sim(400, 0.03, 11, bound_scale=0.15).assign(block_index=2)], ignore_index=True)
-    r = fit_stopping_model(d, time_course="flat")
+    # Default: all five group parameters per block; time course, noise, NDT shared.
+    r = fit_stopping_model(d)
+    assert r["params"]["guess_rate"].nunique() == 2
+    assert r["n_params"] == 2 * 5 + 2 + 1 + 1   # 5 per block; 2 free knots; noise; NDT
+    # Sharing the three rates.
+    r = fit_stopping_model(d, time_course="flat", shared_params=("guess_rate", "lapse_rate", "anticipation_rate"))
     p = r["params"]
     assert p["guess_rate"].nunique() == 1 and p["lapse_rate"].nunique() == 1
     assert p["bound_scale"].nunique() == 2

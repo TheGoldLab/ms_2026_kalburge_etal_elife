@@ -14,11 +14,11 @@ Run from the project root, detached:
     nohup uv run python scripts/run_stopping_fits.py [variant ...] > data/processed/stopping_fits.log 2>&1 &
 
 Variants (default: main):
-    main            bound scale, CV and time course per block; guess, lapse,
-                    anticipation, sensory noise and NDT {1, 2} shared
-    shared_tc       time course shared across blocks
+    main            bound scale and CV, guess, lapse and anticipation rates per
+                    block; time course, sensory noise and NDT {1, 2} shared
+    per_block_tc    time course per block
     flat            no time course (constant bound)
-    per_block_rates guess, lapse and anticipation rates per block
+    shared_rates    guess, lapse and anticipation rates shared across blocks
     ndt123          NDT {1, 2, 3}
     no_noise        sensory_std fixed at 0
 """
@@ -35,9 +35,9 @@ OUT_DIR = Path("data/processed")
 DATASETS = {"OL": [1, 2, 3, 4, 5, 6], "MX": [1, 2, 3]}
 VARIANTS = {
     "main": {},
-    "shared_tc": {"time_course": "shared"},
+    "per_block_tc": {"time_course": "per_group"},
     "flat": {"time_course": "flat"},
-    "per_block_rates": {"shared_params": ()},
+    "shared_rates": {"shared_params": ("guess_rate", "lapse_rate", "anticipation_rate")},
     "ndt123": {"ndt_values": (1, 2, 3)},
     "no_noise": {"fixed": {"sensory_std": 0.0}},
 }
