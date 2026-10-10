@@ -13,9 +13,15 @@ Run from the project root, detached:
 
     nohup uv run python scripts/run_stopping_fits.py [variant ...] > data/processed/stopping_fits.log 2>&1 &
 
-Variants (default: main):
+Variants (default: main). Variants other than main/knots/knee were last fit
+with the knots time course; refitting them now uses the knee form.
+
+Variants:
     main            bound scale and CV, guess, lapse and anticipation rates per
-                    block; time course, sensory noise and NDT {1, 2} shared
+                    block; knee-form time course, sensory noise and NDT {1, 2}
+                    shared (fit_stopping_model's defaults)
+    knots           as main but the time course through knots at steps 1/6/16
+                    (the main model until 2026-10-10)
     per_block_tc    time course per block
     flat            no time course (constant bound)
     shared_rates    guess, lapse and anticipation rates shared across blocks
@@ -24,8 +30,7 @@ Variants (default: main):
     flat_guess_tc   constant bound; guess rate varies over the trial (shared
                     shape per subject, same knots and penalty as the bound)
     both_tc         bound and guess-rate time courses both shared per subject
-    knee            bound time course with a free knee: linear (in log) from
-                    step 1 to the knee, then a constant late slope; shared per subject
+    knee            same as main (kept for the record of the knee comparison)
     knee_flat       knee form with the bound flat after the knee
     mx_by_snr       MX only: every per-block parameter separate per block x SNR
                     (groups 'B<block>_lo' / 'B<block>_hi'), to test whether
@@ -45,6 +50,7 @@ OUT_DIR = Path("data/processed")
 DATASETS = {"OL": [1, 2, 3, 4, 5, 6], "MX": [1, 2, 3]}
 VARIANTS = {
     "main": {},
+    "knots": {"time_course_form": "knots"},
     "per_block_tc": {"time_course": "per_group"},
     "flat": {"time_course": "flat"},
     "shared_rates": {"shared_params": ("guess_rate", "lapse_rate", "anticipation_rate")},

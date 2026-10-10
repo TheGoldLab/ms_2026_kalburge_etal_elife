@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_effective_bounds,
-                             simulate_stopping_trials, stopping_model_nll)
+from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_commit_type_probabilities,
+                             get_effective_bounds, simulate_stopping_trials, stopping_model_nll)
 
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
             sensory_std=0.02)
@@ -45,7 +45,7 @@ def test_zero_sensory_noise_is_exact_crossing():
 
 def test_fit_recovers_parameters_and_time_course():
     d = _sim(4000, 0.02, 3, log_h=COLLAPSE)
-    r = fit_stopping_model(d, group_col=None, smooth_penalty=0.0)
+    r = fit_stopping_model(d, group_col=None, smooth_penalty=0.0, time_course_form="knots")
     p = r["params"].iloc[0]
     assert r["success"]
     assert abs(p["bound_scale"] - TRUE["bound_scale"]) < 0.02
@@ -95,10 +95,10 @@ def test_fit_rejects_missing_choices():
 def test_shared_and_per_block_parameters():
     d = pd.concat([_sim(400, 0.01, 10, bound_scale=0.25).assign(block_index=1),
                    _sim(400, 0.03, 11, bound_scale=0.15).assign(block_index=2)], ignore_index=True)
-    # Default: all five group parameters per block; time course, noise, NDT shared.
+    # Default: all five group parameters per block; knee time course (3), noise, NDT shared.
     r = fit_stopping_model(d)
     assert r["params"]["guess_rate"].nunique() == 2
-    assert r["n_params"] == 2 * 5 + 2 + 1 + 1   # 5 per block; 2 free knots; noise; NDT
+    assert r["n_params"] == 2 * 5 + 3 + 1 + 1   # 5 per block; start, knee, late slope; noise; NDT
     # Sharing the three rates.
     r = fit_stopping_model(d, time_course="flat", shared_params=("guess_rate", "lapse_rate", "anticipation_rate"))
     p = r["params"]
@@ -147,3 +147,16 @@ def test_fit_recovers_knee_time_course():
     assert np.allclose(bound_time_course(p, steps), TRUE["bound_scale"] * np.exp(
         np.where(steps < knee[1], knee[0] * (knee[1] - steps) / (knee[1] - 1), knee[2] * (steps - knee[1]))),
         atol=0.04)
+
+
+def test_commit_type_probabilities_are_calibrated():
+    d = _sim(6000, 0.02, 14, guess_rate=0.06, log_h=COLLAPSE).assign(subject_index=1, condition="B1")
+    fit = pd.DataFrame([{"subject_index": 1, "group": "B1", **TRUE, "guess_rate": 0.06,
+                         "ndt_p1": NDT_PROBS[0], "ndt_p2": NDT_PROBS[1],
+                         **{f"log_h_k{k}": v for k, v in zip(KNOTS, COLLAPSE)}}])
+    pg = get_commit_type_probabilities(d, fit)
+    ok = pg.notna()
+    is_guess = d.commit_type.isin(["guess", "anticipation"])
+    # Posterior probabilities average to the true fraction, overall and within true types' ordering.
+    assert abs(pg[ok].mean() - is_guess[ok].mean()) < 0.015
+    assert pg[ok & is_guess].mean() > pg[ok & ~is_guess].mean() + 0.3

@@ -19,10 +19,13 @@ position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
 2. **Bound.** The bound at step j is ``b_j = m * theta(j)``. The trial's
    multiplier ``m`` is gamma-distributed with mean 1 and coefficient of
    variation ``bound_cv``. The time course ``theta(j)`` is
-   ``bound_scale * h(j)``, where ``log h`` is piecewise linear in j through
-   ``knots`` (constant outside them) with ``h(anchor) = 1``; so
-   ``bound_scale`` is the mean bound at the anchor step (default 6, about the
-   median commit step, where the level is best determined). ``h`` is shared by
+   ``bound_scale * h(j)``. Default ('knee' form): ``log h`` falls (or rises)
+   linearly from ``log_h_start`` at step 1 to 0 at a free, continuous knee
+   step, then changes by ``late_slope`` per step, so ``bound_scale`` is the
+   mean bound at the knee (the paper's single bound measure). Alternative
+   ('knots' form): ``log h`` piecewise linear in j through ``knots``
+   (constant outside them) with ``h(anchor) = 1``, so ``bound_scale`` is the
+   mean bound at the anchor step (default 6). ``h`` is shared by
    all of a subject's groups (``time_course='shared'``, the default), separate
    per group (``'per_group'``), or flat (``'flat'``). On change-point trials, positions
    j >= change_point use ``bound_scale_post`` (if fit).
@@ -303,28 +306,30 @@ def _pad_steps(steps_list):
 
 
 def _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values, ndt_probs,
-                      n_quad=24, wall=WALL, n_buckets=4):
+                      n_quad=24, wall=WALL, n_buckets=4, return_parts=False):
     """
     Per-trial likelihood, computed in length buckets.
 
     Trials range from 1 to ~50 steps, so a single NaN-padded (n, L, n_quad)
     array is mostly padding; sorting trials by length and padding each bucket
-    only to its own maximum gives the same result much faster.
+    only to its own maximum gives the same result much faster. With
+    ``return_parts``, also returns the parts of each likelihood from guesses
+    and from wall censoring (see _trial_likelihood_padded).
     """
     order = np.argsort(lens, kind="stable")
-    lik = np.empty(len(lens))
+    out = np.empty((3, len(lens)))
     for idx in np.array_split(order, min(n_buckets, len(order))):
         if idx.size == 0:
             continue
         L = int(lens[idx].max())
-        lik[idx] = _trial_likelihood_padded(
+        out[:, idx] = _trial_likelihood_padded(
             x[idx, :L], lens[idx], choice_pm[idx], group_idx[idx], post_mask[idx, :L], p, knots,
-            ndt_values, ndt_probs, n_quad=n_quad, wall=wall)
-    return lik
+            ndt_values, ndt_probs, n_quad=n_quad, wall=wall, return_parts=True)
+    return out if return_parts else out[0]
 
 
 def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values, ndt_probs,
-                             n_quad=24, wall=WALL):
+                             n_quad=24, wall=WALL, return_parts=False):
     """
     Per-trial likelihood of (RT, choice) under the stopping model.
 
@@ -349,7 +354,10 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
 
     Returns
     -------
-    (n,) array of likelihoods.
+    (n,) array of likelihoods; with ``return_parts``, a (3, n) array of the
+    likelihood, its part from guess commits (including start-frame guesses
+    and anticipations), and its part from wall-censored trials (commit type
+    unknown).
 
     Notes
     -----
@@ -434,11 +442,11 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         # perceived position inside the bound: P(0 < y < b) = P(y > 0) - P(y >= b), and likewise left.
         in_r = np.clip(pr_k - up_k, 0.0, None)
         in_l = np.clip(1 - pr_k - dn_k, 0.0, None)
-        pr = width * ((s_prev * (up_k + g_k * in_r)) @ weights)
-        pl = width * ((s_prev * (dn_k + g_k * in_l)) @ weights)
-        pr += (1 - uc) * s_prev_guess * g_k[:, 0] * pr_k[:, 0]
-        pl += (1 - uc) * s_prev_guess * g_k[:, 0] * (1 - pr_k[:, 0])
-        return pr, pl
+        pr_b = width * ((s_prev * up_k) @ weights)
+        pl_b = width * ((s_prev * dn_k) @ weights)
+        pr_g = width * ((s_prev * g_k * in_r) @ weights) + (1 - uc) * s_prev_guess * g_k[:, 0] * pr_k[:, 0]
+        pl_g = width * ((s_prev * g_k * in_l) @ weights) + (1 - uc) * s_prev_guess * g_k[:, 0] * (1 - pr_k[:, 0])
+        return pr_b + pr_g, pl_b + pl_g, pr_g, pl_g
 
     at_wall = ax >= wall - 1e-9
     wall_step = np.where(at_wall.any(axis=1), at_wall.argmax(axis=1), L)
@@ -451,20 +459,28 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         same = np.sign(xx[rows, np.minimum(w, L - 1)]) == choice_pm
         lik[lw] = (s_wall * np.where(same, 1 - lapse / 2, lapse / 2))[lw]
 
+    lik_wall = lik.copy()
     lant = lens == 1                       # first-frame press: anticipation only
     lik[lant] = antic[lant] * 0.5
+    lik_guess = np.where(lant, lik, 0.0)
     for ndt, p_ndt in zip(ndt_values, ndt_probs):
         k = lens - ndt - 1
         term = np.zeros(n)
+        term_g = np.zeros(n)
         l0 = ~lw & ~lant & (k == 0)          # guess on the start frame (no evidence)
-        term[l0] = (1 - antic[l0]) * gr[l0, 0] * 0.5
+        term[l0] = term_g[l0] = (1 - antic[l0]) * gr[l0, 0] * 0.5
         lk = ~lw & ~lant & (k >= 1)          # k < 0 is impossible for this NDT
         if lk.any():
             kk = np.where(lk, k, 1)
-            pr, pl = integrate(kk, commit=True)
+            pr, pl, pr_g, pl_g = integrate(kk, commit=True)
             p_c = np.where(choice_pm > 0, pr, pl)
             term[lk] = ((1 - lapse) * p_c + lapse / 2 * (pr + pl))[lk]
+            p_cg = np.where(choice_pm > 0, pr_g, pl_g)
+            term_g[lk] = ((1 - lapse) * p_cg + lapse / 2 * (pr_g + pl_g))[lk]
         lik += p_ndt * np.maximum(term, 0.0)
+        lik_guess += p_ndt * np.maximum(term_g, 0.0)
+    if return_parts:
+        return np.stack([lik, lik_guess, lik_wall])
     return lik
 
 
@@ -593,7 +609,7 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
 def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="shared",
                        shared_params=SHARED_PARAMS, knots=KNOTS, ndt_values=NDT_VALUES, fixed=None,
                        smooth_penalty=2.0, anchor=ANCHOR, n_quad=24, wall=WALL, x0=None,
-                       max_evals=200_000, guess_time_course="flat", time_course_form="knots"):
+                       max_evals=200_000, guess_time_course="flat", time_course_form="knee"):
     """
     Maximum-likelihood fit of the stopping model to one subject's trials.
 
@@ -648,8 +664,9 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         the anchor step), constant outside the knots (step 0 takes the first
         knot's value), and the same smoothing penalty as ``log h``. Default
         'flat' (constant guess rate).
-    time_course_form : {'knots', 'knee'}
-        Form of the bound time course. 'knots': ``log h`` piecewise linear
+    time_course_form : {'knee', 'knots'}
+        Form of the bound time course (default 'knee', chosen by model
+        comparison on OL/MX: dAIC -1,259 OL, -507 MX vs. knots at 1/6/16). 'knots': ``log h`` piecewise linear
         through ``knots``, 0 at ``anchor``. 'knee': linear from
         ``log_h_start`` at step 1 to 0 at a free knee step (``knee``, 1.5-15,
         continuous), then ``late_slope`` per step; ``bound_scale`` is then the
@@ -876,6 +893,81 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     })
 
 
+def _params_from_fits(fit_rows, knots=KNOTS):
+    """Natural-scale parameter dict (stopping_model_nll format) from one subject's fit rows, sorted by group."""
+    f = fit_rows.sort_values("group")
+    params = {name: f[name].to_numpy(float) for name in GROUP_PARAMS}
+    for name in POST_PARAMS:
+        if f"{name}_post" in f:
+            params[f"{name}_post"] = np.where(np.isfinite(f[f"{name}_post"]), f[f"{name}_post"], f[name])
+    params["sensory_std"] = float(f["sensory_std"].iloc[0])
+    ndt_cols = sorted((c for c in f.columns if c.startswith("ndt_p")), key=lambda c: int(c[5:]))
+    params["ndt_probs"] = f[ndt_cols].iloc[0].to_numpy(float)
+    if "knee" in f and np.isfinite(f["knee"]).all():
+        for name in KNEE_PARAMS:
+            params[name] = f[name].to_numpy(float)
+    else:
+        params["log_h"] = np.stack([f.get(f"log_h_k{k}", pd.Series(0.0, index=f.index)).to_numpy(float)
+                                    for k in knots], axis=1)
+    if f"log_g_k{knots[0]}" in f and np.isfinite(f[f"log_g_k{knots[0]}"]).all():
+        params["log_g"] = np.stack([f[f"log_g_k{k}"].to_numpy(float) for k in knots], axis=1)
+    return params
+
+
+def get_commit_type_probabilities(data_table, fits, group_col="condition", knots=KNOTS, ndt_values=NDT_VALUES,
+                                  n_quad=24, wall=WALL):
+    """
+    Posterior probability that each trial's commit was a guess, under the fitted model.
+
+    For each trial, the likelihood of its (RT, choice) splits into a part from
+    bound crossings and a part from guesses (including start-frame guesses
+    and anticipations), averaged over NDT; ``p_guess`` is the guess part's
+    share. Wall-censored trials (answered later than any NDT allows after the
+    pigeon reached the wall) have no defined commit type and get NaN.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Trials (``subject_index``, ``group_col``, ``steps``, ``choice``,
+        optional ``change_point``). Trials need not be the ones fit.
+    fits : pd.DataFrame
+        Output of fit_stopping_models with the same grouping.
+    group_col, knots, ndt_values, n_quad, wall
+        As in fit_stopping_model.
+
+    Returns
+    -------
+    pd.Series ``p_guess`` (index of data_table); NaN for wall-censored trials
+    and subjects or groups without a fit.
+    """
+    out = pd.Series(np.nan, index=data_table.index, name="p_guess")
+    for subject, d in data_table.groupby("subject_index"):
+        f = fits[(fits["subject_index"] == subject) & fits["bound_scale"].notna()]
+        d = d[d[group_col].isin(f["group"])]
+        if d.empty:
+            continue
+        f = f[f["group"].isin(d[group_col])]
+        p = _params_from_fits(f, knots)
+        x, lens, choice_pm, group_values, group_idx, post_mask = _prepare(d, group_col)
+        G = len(group_values)
+        q = {name: np.broadcast_to(np.asarray(p[name], float), (G,)) for name in GROUP_PARAMS}
+        for name in POST_PARAMS:
+            q[f"{name}_post"] = np.broadcast_to(np.asarray(p.get(f"{name}_post", p[name]), float), (G,))
+        q["sensory_std"] = p["sensory_std"]
+        q["log_h"] = np.atleast_2d(p.get("log_h", np.zeros(len(knots))))
+        q["log_g"] = np.atleast_2d(p.get("log_g", np.zeros(len(knots))))
+        if "knee" in p:
+            for name in KNEE_PARAMS:
+                q[name] = p[name]
+        lik, lik_guess, lik_wall = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, q, knots,
+                                                     ndt_values, p["ndt_probs"], n_quad=n_quad, wall=wall,
+                                                     return_parts=True)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            pg = np.where(lik_wall > 0, np.nan, lik_guess / lik)
+        out.loc[d.index] = pg
+    return out
+
+
 def _fit_one_subject(args):
     """Worker for fit_stopping_models (module level so it can run in a process pool)."""
     subject, table, kwargs = args
@@ -1095,3 +1187,74 @@ def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclus
     d["condition"] = [f"B{b:.0f}" for b in d["block_index"]]
     d["task"] = task_type
     return d
+
+
+def get_bound_residuals(data_table, fits, group_col="condition", num_reps=20, max_dt=10, min_sim_trials=20,
+                        knots=KNOTS, ndt_values=NDT_VALUES, rng=None):
+    """
+    Trial-by-trial deviation of the measured bound from the model's expected measured bound.
+
+    Each subject x group is simulated ``num_reps`` times over its trials from
+    its fitted (steady-state) parameters, and the simulated trials are run
+    through the real-data bound inference (``infer_bounds_like_data``: same
+    ``get_bounds`` call, congruence-based NDT and DT). The expected measured
+    |bound| (and log |bound|) at each DT is the mean over simulated trials
+    that pass the standard filter without a trial-number floor
+    (``get_good_trial_array(min_trial_number=None)``: DT >= 2, no wall hit,
+    RT cutoff) and have a nonzero bound. Overshoot, the DT assignment and the
+    bound's within-trial time course are thus in the expectation, so the
+    residual isolates deviations from the subject's steady state (e.g.
+    adaptation at the start of a block).
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Real trials with raw (not bias-corrected) ``bound`` and get_bounds'
+        ``DT`` (``get_data_table(..., correct_bias=None)``), plus
+        ``group_col``, ``snr``, ``step_std``, ``block_index``.
+    fits : pd.DataFrame
+        Output of fit_stopping_models with the same grouping.
+    group_col : str
+    num_reps : int
+        Simulated repetitions of each real trial.
+    max_dt : int
+        DT values >= max_dt are pooled.
+    min_sim_trials : int
+        Expected values from fewer simulated trials are NaN (and so are those
+        trials' residuals).
+    knots, ndt_values : sequences
+        Must match the fits.
+    rng : np.random.Generator or None
+
+    Returns
+    -------
+    pd.DataFrame (index of data_table) with ``expected_abs_bound``,
+    ``expected_log_abs_bound``, ``bound_residual`` (|bound| - expected) and
+    ``log_bound_residual`` (log |bound| - expected log |bound|). NaN where the
+    trial's bound is missing or zero, or the expectation is undetermined.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    have_fit = data_table.set_index(["subject_index", group_col]).index.isin(
+        fits.loc[fits["bound_scale"].notna()].set_index(["subject_index", "group"]).index)
+    d = data_table[have_fit & data_table["choice"].notna()]
+    sim = simulate_stopping_data_table(d, fits, group_col=group_col, knots=knots, ndt_values=ndt_values,
+                                       num_reps=num_reps, rng=rng)
+    sim = infer_bounds_like_data(sim)
+    ls = (get_good_trial_array(sim, min_trial_number=None) & np.isfinite(sim["bound"]) & (sim["bound"] != 0))
+    sim = sim[ls].assign(dt_bin=lambda t: t["DT"].clip(upper=max_dt), log_abs=lambda t: np.log(t["bound"].abs()))
+    g = sim.groupby(["subject_index", group_col, "dt_bin"])
+    expect = pd.DataFrame({"expected_abs_bound": g["abs_bound"].mean(),
+                           "expected_log_abs_bound": g["log_abs"].mean(), "n_sim": g.size()})
+    expect.loc[expect["n_sim"] < min_sim_trials, ["expected_abs_bound", "expected_log_abs_bound"]] = np.nan
+
+    key = pd.MultiIndex.from_arrays([data_table["subject_index"], data_table[group_col],
+                                     data_table["DT"].clip(upper=max_dt)])
+    e = expect.reindex(key)
+    out = pd.DataFrame({"expected_abs_bound": e["expected_abs_bound"].to_numpy(),
+                        "expected_log_abs_bound": e["expected_log_abs_bound"].to_numpy()}, index=data_table.index)
+    ab = data_table["bound"].abs().where(data_table["bound"] != 0)
+    out["bound_residual"] = ab - out["expected_abs_bound"]
+    with np.errstate(divide="ignore"):
+        out["log_bound_residual"] = np.log(ab) - out["expected_log_abs_bound"]
+    return out

@@ -103,7 +103,8 @@ def fit_exp_tau(trial_nums, z_vals, tau_max, min_valid=8):
 
 def compute_per_subject_curves_with_nulls(data_table, max_trial, blocks,
                                            half_win=3, min_win=3,
-                                           n_perm=1000, seed=123):
+                                           n_perm=1000, seed=123,
+                                           value_col='abs_bound', zscore=True):
     """
     For every subject x block, computes the real smoothed z-scored bound curve plus
     a bank of permutation-null curves (trial order shuffled within that subject's own
@@ -128,6 +129,14 @@ def compute_per_subject_curves_with_nulls(data_table, max_trial, blocks,
         Number of trial-order permutation nulls per subject/block. Default 1000.
     seed : int
         Seed for the permutation RNG. Default 123.
+    value_col : str
+        Per-trial quantity to average. Default 'abs_bound'; e.g. a residual
+        from the stopping model (``pigeon.stopping.get_bound_residuals``) or
+        a guess probability. Trials with a non-finite value are skipped.
+    zscore : bool
+        z-score the values within each subject x block before smoothing
+        (default). False keeps their units (e.g. a log ratio, whose
+        steady-state value is already ~0).
 
     Returns
     -------
@@ -155,13 +164,17 @@ def compute_per_subject_curves_with_nulls(data_table, max_trial, blocks,
 
         for si, subj in enumerate(subjects):
             sd = block_data[block_data['subject_index'] == subj]
-            if sd['abs_bound'].dropna().shape[0] < 2:
+            sd = sd[np.isfinite(sd[value_col].to_numpy(float))]
+            if sd.shape[0] < 2:
                 continue
-            mu = sd['abs_bound'].mean()
-            sigma = sd['abs_bound'].std()
-            if sigma < 1e-10:
-                continue
-            z = (sd['abs_bound'].values - mu) / sigma
+            if zscore:
+                mu = sd[value_col].mean()
+                sigma = sd[value_col].std()
+                if sigma < 1e-10:
+                    continue
+                z = (sd[value_col].to_numpy(float) - mu) / sigma
+            else:
+                z = sd[value_col].to_numpy(float)
             t_vals = sd['trial_number'].values
 
             W, lvalid = _build_window_matrix(t_vals, trial_nums, half_win, min_win)
@@ -291,7 +304,8 @@ def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
 
 def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
                             half_win=3, min_win=3, n_perm=1000, seed=123,
-                            alpha=0.05, between_min_trials=5):
+                            alpha=0.05, between_min_trials=5,
+                            value_col='abs_bound', zscore=True):
     """
     Fit within-block adaptation time constants (tau) per subject per block, using
     the same pipeline and eligibility criteria as the Figure04_RRvsBound tau insets
@@ -319,6 +333,12 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
     between_min_trials : int
         Minimum trials per compared block for the between-block eligibility
         test (blocks 2+). Default 5.
+    value_col, zscore
+        Passed to compute_per_subject_curves_with_nulls (the curves that are
+        tested and fit). The between-block eligibility test always uses
+        ``abs_bound``: it asks whether the steady-state bound changed between
+        blocks, which a within-block residual (~0 at steady state in every
+        block by construction) cannot answer.
 
     Returns
     -------
@@ -345,7 +365,7 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
     blocks = list(blocks)
     trial_nums, real_curves, perm_curves, subjects = compute_per_subject_curves_with_nulls(
         data_table, max_trial, blocks, half_win=half_win, min_win=min_win,
-        n_perm=n_perm, seed=seed)
+        n_perm=n_perm, seed=seed, value_col=value_col, zscore=zscore)
 
     _, sig_within = per_subject_significance(real_curves, perm_curves, alpha=alpha)
     _, sig_between = between_block_significance(
