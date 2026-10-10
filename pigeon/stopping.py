@@ -13,9 +13,9 @@ Positions ``x_0 = 0, x_1, x_2, ...`` are the pigeon's on-screen positions (the
 ``steps`` column of ``get_data_table``; clamped at +/-WALL by the task). Each
 position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
 
-1. **Anticipation.** With probability ``anticipation_rate`` the subject commits
-   before any step is shown (commit step k <= 0). The choice is random, and
-   the response comes uniformly within the first NDT + 1 frames.
+1. **Anticipation.** With probability ``anticipation_rate`` the key is pressed
+   during the trial's first frame (RT = 1), before anything shown could have
+   been processed. The choice is random.
 2. **Bound.** The bound at step j is ``b_j = m * theta(j)``. The trial's
    multiplier ``m`` is gamma-distributed with mean 1 and coefficient of
    variation ``bound_cv``. The time course ``theta(j)`` is
@@ -32,7 +32,8 @@ position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
    crossings of the on-screen position.
 4. **Guess.** If the bound isn't crossed at step j, the subject commits anyway
    with probability ``guess_rate`` (regardless of the evidence), choosing the
-   side of the perceived position ``y_j``.
+   side of the perceived position ``y_j``. This includes step 0, the start frame
+   (pigeon at center, so the choice is random; RT = NDT + 1).
 5. **Lapse.** With probability ``lapse_rate`` the choice is random instead.
 6. **NDT.** The response comes NDT + 1 frames after the commit step,
    ``RT = k + NDT + 1`` (the ``DT = RT - NDT - 1`` convention of
@@ -235,7 +236,6 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
 
     gr = np.where(post_mask, np.asarray(p["guess_rate_post"])[group_idx][:, None],
                   np.asarray(p["guess_rate"])[group_idx][:, None])
-    gr[:, 0] = 0.0
     lapse = np.asarray(p["lapse_rate"])[group_idx]
     antic = np.asarray(p["anticipation_rate"])[group_idx]
     log_guess_surv = np.log1p(-antic)[:, None] + np.cumsum(np.log1p(-gr), axis=1)   # no guess through k
@@ -297,12 +297,14 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         same = np.sign(xx[rows, np.minimum(w, L - 1)]) == choice_pm
         lik[lw] = (s_wall * np.where(same, 1 - lapse / 2, lapse / 2))[lw]
 
+    lant = lens == 1                       # first-frame press: anticipation only
+    lik[lant] = antic[lant] * 0.5
     for ndt, p_ndt in zip(ndt_values, ndt_probs):
         k = lens - ndt - 1
         term = np.zeros(n)
-        lant = ~lw & (k <= 0)
-        term[lant] = antic[lant] / (ndt + 1) * 0.5
-        lk = ~lw & ~lant
+        l0 = ~lw & ~lant & (k == 0)          # guess on the start frame (no evidence)
+        term[l0] = (1 - antic[l0]) * gr[l0, 0] * 0.5
+        lk = ~lw & ~lant & (k >= 1)          # k < 0 is impossible for this NDT
         if lk.any():
             kk = np.where(lk, k, 1)
             pr, pl = integrate(kk, commit=True)
@@ -610,7 +612,7 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     hit_bound = np.abs(perceived) >= theta * mult[:, None]
     gr = np.where(lpost, post(guess_rate_post, guess_rate), guess_rate)
     hit_guess = rng.random((n, max_steps + 1)) < gr
-    hit_bound[:, 0] = hit_guess[:, 0] = False
+    hit_bound[:, 0] = False   # no evidence at the start frame; guesses there are allowed
 
     last = max_steps - max(ndt_values) - 1
     big = max_steps + 10
@@ -630,7 +632,7 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     rt = k + ndt + 1
 
     lant = rng.random(n) < anticipation_rate
-    rt[lant] = rng.integers(1, ndt[lant] + 2)   # uniform over the first NDT + 1 frames
+    rt[lant] = 1                                 # key pressed during the first frame
     choice[lant] = rand_side[lant]
     k[lant] = 0
     ctype[lant] = "anticipation"

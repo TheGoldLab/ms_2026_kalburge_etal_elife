@@ -24,7 +24,8 @@ def test_simulated_trials_follow_rt_convention():
     assert (d["steps"].apply(lambda s: s[0]) == 0).all()
     lc = d["commit_type"] != "anticipation"
     assert (d.loc[lc, "RT"] == d.loc[lc, "commit_step"] + d.loc[lc, "ndt"] + 1).all()
-    assert (d.loc[~lc, "RT"] <= d.loc[~lc, "ndt"] + 1).all()
+    assert (d.loc[~lc, "RT"] == 1).all()
+    assert (d.loc[lc, "RT"] >= 2).all()
 
 
 def test_nll_is_lower_at_truth_than_perturbed():
