@@ -129,3 +129,21 @@ def test_fit_recovers_guess_time_course_with_flat_bound():
     assert abs(p["bound_scale"] - TRUE["bound_scale"]) < 0.02
     assert abs(p["log_g_k1"] - early[0]) < 0.4
     assert abs(p["log_g_k16"] - early[2]) < 0.5
+
+
+def test_fit_recovers_knee_time_course():
+    knee = (0.8, 3.5, -0.01)   # bound 2.2x higher at step 1, knee at step 3.5, slight late decline
+    d = _sim(4000, 0.02, 13, knee_shape=knee)
+    truth = {**TRUE, "ndt_probs": NDT_PROBS, **dict(zip(("log_h_start", "knee", "late_slope"), knee))}
+    nll_true = stopping_model_nll(d, truth, group_col=None)
+    assert stopping_model_nll(d, {**truth, "knee": 7.0}, group_col=None) > nll_true
+    r = fit_stopping_model(d, group_col=None, time_course_form="knee", smooth_penalty=0.0)
+    p = r["params"].iloc[0]
+    assert r["success"]
+    assert abs(p["knee"] - knee[1]) < 1.0
+    assert abs(p["log_h_start"] - knee[0]) < 0.3
+    assert abs(p["bound_scale"] - TRUE["bound_scale"]) < 0.02
+    steps = np.arange(1, 20)
+    assert np.allclose(bound_time_course(p, steps), TRUE["bound_scale"] * np.exp(
+        np.where(steps < knee[1], knee[0] * (knee[1] - steps) / (knee[1] - 1), knee[2] * (steps - knee[1]))),
+        atol=0.04)

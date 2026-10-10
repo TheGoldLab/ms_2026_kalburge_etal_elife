@@ -24,6 +24,9 @@ Variants (default: main):
     flat_guess_tc   constant bound; guess rate varies over the trial (shared
                     shape per subject, same knots and penalty as the bound)
     both_tc         bound and guess-rate time courses both shared per subject
+    knee            bound time course with a free knee: linear (in log) from
+                    step 1 to the knee, then a constant late slope; shared per subject
+    knee_flat       knee form with the bound flat after the knee
     mx_by_snr       MX only: every per-block parameter separate per block x SNR
                     (groups 'B<block>_lo' / 'B<block>_hi'), to test whether
                     mixed-SNR subjects set different bounds by SNR (Figure 5)
@@ -49,6 +52,8 @@ VARIANTS = {
     "no_noise": {"fixed": {"sensory_std": 0.0}},
     "flat_guess_tc": {"time_course": "flat", "guess_time_course": "shared"},
     "both_tc": {"guess_time_course": "shared"},
+    "knee": {"time_course_form": "knee"},
+    "knee_flat": {"time_course_form": "knee", "fixed": {"late_slope": 0.0}},
     "mx_by_snr": {"group_col": "condition_snr", "tasks": ["MX"]},
 }
 
