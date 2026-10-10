@@ -21,12 +21,16 @@ Variants (default: main):
     shared_rates    guess, lapse and anticipation rates shared across blocks
     ndt123          NDT {1, 2, 3}
     no_noise        sensory_std fixed at 0
+    mx_by_snr       MX only: every per-block parameter separate per block x SNR
+                    (groups 'B<block>_lo' / 'B<block>_hi'), to test whether
+                    mixed-SNR subjects set different bounds by SNR (Figure 5)
 """
 
 import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from pigeon.stopping import fit_stopping_models, get_stopping_model_trials
@@ -40,6 +44,7 @@ VARIANTS = {
     "shared_rates": {"shared_params": ("guess_rate", "lapse_rate", "anticipation_rate")},
     "ndt123": {"ndt_values": (1, 2, 3)},
     "no_noise": {"fixed": {"sensory_std": 0.0}},
+    "mx_by_snr": {"group_col": "condition_snr", "tasks": ["MX"]},
 }
 
 
@@ -49,12 +54,19 @@ def log(msg):
 
 def main(variants):
     tables = {task: get_stopping_model_trials(task, blocks) for task, blocks in DATASETS.items()}
+    for d in tables.values():
+        # Lowest |snr| in the dataset is 'lo'; OL raw blocks have one SNR each.
+        lo = np.isclose(d["snr"].abs(), d["snr"].abs().min())
+        d["condition_snr"] = d["condition"] + np.where(lo, "_lo", "_hi")
     for variant in variants:
-        kwargs = VARIANTS[variant]
+        kwargs = dict(VARIANTS[variant])
+        tasks = kwargs.pop("tasks", list(tables))
+        kwargs.setdefault("group_col", "condition")
         parts = []
-        for task, d in tables.items():
+        for task in tasks:
+            d = tables[task]
             t0 = time.time()
-            f = fit_stopping_models(d, group_col="condition", **kwargs).assign(task=task)
+            f = fit_stopping_models(d, **kwargs).assign(task=task)
             n_bad = int((~f.groupby("subject_index").success.first()).sum())
             log(f"{variant} {task}: {f.subject_index.nunique()} subjects in {(time.time() - t0) / 60:.1f} min; "
                 f"{n_bad} did not converge")
