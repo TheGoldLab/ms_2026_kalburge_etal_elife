@@ -115,3 +115,17 @@ def test_effective_bounds_match_time_course():
     want = [0.7 * bound_time_course(fit, [max(rt - 2, 1)])[0] + 0.3 * bound_time_course(fit, [max(rt - 3, 1)])[0]
             for rt in d.RT]
     assert np.allclose(got, want)
+
+
+def test_fit_recovers_guess_time_course_with_flat_bound():
+    early = np.array([1.5, 0.0, -0.5])   # logit-scale guess shift at KNOTS: more guessing early
+    d = _sim(4000, 0.02, 12, log_g=early, guess_rate=0.04)
+    truth = {**TRUE, "guess_rate": 0.04, "ndt_probs": NDT_PROBS, "log_g": early}
+    nll_true = stopping_model_nll(d, truth, group_col=None)
+    assert stopping_model_nll(d, {**truth, "log_g": np.zeros(3)}, group_col=None) > nll_true
+    r = fit_stopping_model(d, group_col=None, time_course="flat", guess_time_course="shared", smooth_penalty=0.0)
+    p = r["params"].iloc[0]
+    assert r["success"]
+    assert abs(p["bound_scale"] - TRUE["bound_scale"]) < 0.02
+    assert abs(p["log_g_k1"] - early[0]) < 0.4
+    assert abs(p["log_g_k16"] - early[2]) < 0.5

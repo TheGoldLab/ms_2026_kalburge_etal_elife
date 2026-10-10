@@ -34,6 +34,11 @@ position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
    with probability ``guess_rate`` (regardless of the evidence), choosing the
    side of the perceived position ``y_j``. This includes step 0, the start frame
    (pigeon at center, so the choice is random; RT = NDT + 1).
+   Optionally (``guess_time_course``) the guess rate varies over the trial:
+   ``expit(logit(guess_rate) + log_g(j))``, with ``log_g`` piecewise linear
+   through the same knots as ``log h`` and 0 at the anchor, so ``guess_rate``
+   is the rate at the anchor step. This is the alternative to a collapsing
+   bound for time-dependent stopping (e.g. more guessing early in the trial).
 5. **Lapse.** With probability ``lapse_rate`` the choice is random instead.
 6. **NDT.** The response comes NDT + 1 frames after the commit step,
    ``RT = k + NDT + 1`` (the ``DT = RT - NDT - 1`` convention of
@@ -107,6 +112,7 @@ _LOG_SENSORY_LIMITS = (np.log(1e-3), np.log(1.0))
 _LOGIT_LIMITS = (-14.0, 8.5)
 _NDT_LOGIT_LIMITS = (-10.0, 10.0)
 _LOG_H_LIMITS = (-3.0, 3.0)
+_LOG_G_LIMITS = (-6.0, 6.0)   # logit-scale shift of the guess rate
 _MIN_LIK = 1e-300
 _TINY = 1e-300
 
@@ -122,6 +128,12 @@ def _log_h(log_h_knots, knots, num_steps):
     j = np.arange(num_steps)
     log_h_knots = np.atleast_2d(log_h_knots)
     return np.stack([np.interp(j, knots, row) for row in log_h_knots])
+
+
+def _shift_logit(rate, shift):
+    """expit(logit(rate) + shift), keeping rate = 0 at 0 (the guess-rate time course)."""
+    with np.errstate(divide="ignore"):
+        return scipy.special.expit(scipy.special.logit(rate) + shift)
 
 
 def bound_time_course(fit_row, steps, knots=KNOTS, post=False):
@@ -321,6 +333,10 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
 
     gr = np.where(post_mask, np.asarray(p["guess_rate_post"])[group_idx][:, None],
                   np.asarray(p["guess_rate"])[group_idx][:, None])
+    log_g = _log_h(p.get("log_g", np.zeros((1, len(knots)))), knots, L)
+    if np.any(log_g != 0):
+        gshape_idx = group_idx if log_g.shape[0] > 1 else np.zeros(n, int)
+        gr = _shift_logit(gr, log_g[gshape_idx])
     lapse = np.asarray(p["lapse_rate"])[group_idx]
     antic = np.asarray(p["anticipation_rate"])[group_idx]
     log_guess_surv = np.log1p(-antic)[:, None] + np.cumsum(np.log1p(-gr), axis=1)   # no guess through k
@@ -402,12 +418,14 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
 class _Layout:
     """Bookkeeping between the transformed parameter vector and named parameters."""
 
-    def __init__(self, n_groups, post_params, n_ndt, time_course, n_knots, fixed, shared_params=(), anchor_idx=0):
+    def __init__(self, n_groups, post_params, n_ndt, time_course, n_knots, fixed, shared_params=(), anchor_idx=0,
+                 guess_time_course="flat"):
         self.n_groups, self.n_ndt, self.time_course = n_groups, n_ndt, time_course
         self.post_params = tuple(q for q in POST_PARAMS if q in post_params)
         self.fixed = dict(fixed or {})
         self.shared = tuple(q for q in GROUP_PARAMS if q in shared_params)
         self.n_shapes = {"flat": 0, "shared": 1, "per_group": n_groups}[time_course]
+        self.n_gshapes = {"flat": 0, "shared": 1, "per_group": n_groups}[guess_time_course]
         self.n_free_h = n_knots - 1
         self.anchor_idx = anchor_idx
         spec = []   # (name, size, limits)
@@ -423,6 +441,7 @@ class _Layout:
         spec.append(("sensory_std", 1, _LOG_SENSORY_LIMITS))
         spec.append(("ndt_logits", n_ndt - 1, _NDT_LOGIT_LIMITS))
         spec.append(("log_h", self.n_shapes * self.n_free_h, _LOG_H_LIMITS))
+        spec.append(("log_g", self.n_gshapes * self.n_free_h, _LOG_G_LIMITS))
         self.spec = [s for s in spec if s[0] not in self.fixed and s[1] > 0]
 
     def limits(self):
@@ -450,6 +469,9 @@ class _Layout:
         free_h = out.get("log_h", np.zeros(0)).reshape(max(self.n_shapes, 1), -1) \
             if self.n_shapes else np.zeros((1, self.n_free_h))
         p["log_h"] = np.insert(free_h, self.anchor_idx, 0.0, axis=1)
+        free_g = out.get("log_g", np.zeros(0)).reshape(max(self.n_gshapes, 1), -1) \
+            if self.n_gshapes else np.zeros((1, self.n_free_h))
+        p["log_g"] = np.insert(free_g, self.anchor_idx, 0.0, axis=1)
         return p
 
 
@@ -480,6 +502,7 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
         sorted group order), optional ``<name>_post``, ``sensory_std``,
         ``ndt_probs`` (one per ndt value), optional ``log_h`` (values at the
         knots, 0 at the anchor; shape (len(knots),) or (n_groups, len(knots));
+        default flat), optional ``log_g`` (guess-rate time course, same shape;
         default flat).
     group_col, knots, ndt_values, n_quad, wall
         See fit_stopping_model.
@@ -495,6 +518,7 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
         p[f"{name}_post"] = np.broadcast_to(np.asarray(params.get(f"{name}_post", params[name]), float), (G,))
     p["sensory_std"] = params["sensory_std"]
     p["log_h"] = np.atleast_2d(params.get("log_h", np.zeros(len(knots))))
+    p["log_g"] = np.atleast_2d(params.get("log_g", np.zeros(len(knots))))
     lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values,
                             np.asarray(params["ndt_probs"], float), n_quad=n_quad, wall=wall)
     return float(-np.sum(np.log(np.maximum(lik, _MIN_LIK))))
@@ -503,7 +527,7 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
 def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="shared",
                        shared_params=SHARED_PARAMS, knots=KNOTS, ndt_values=NDT_VALUES, fixed=None,
                        smooth_penalty=2.0, anchor=ANCHOR, n_quad=24, wall=WALL, x0=None,
-                       max_evals=200_000):
+                       max_evals=200_000, guess_time_course="flat"):
     """
     Maximum-likelihood fit of the stopping model to one subject's trials.
 
@@ -551,13 +575,21 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         finite-difference gradients each iteration costs n_params + 1
         evaluations, so scipy's default (15,000) stops 40+-parameter fits
         after ~330 iterations, before convergence.
+    guess_time_course : {'flat', 'shared', 'per_group'}
+        Guess-rate time course: the guess rate at step j is
+        ``expit(logit(guess_rate) + log_g(j))``, with ``log_g`` piecewise linear
+        through ``knots``, 0 at ``anchor`` (so ``guess_rate`` is the rate at
+        the anchor step), constant outside the knots (step 0 takes the first
+        knot's value), and the same smoothing penalty as ``log h``. Default
+        'flat' (constant guess rate).
 
     Returns
     -------
     dict with keys
         ``params``      : pd.DataFrame, one row per group: natural-scale group
                           parameters, ``n_trials``, ``sensory_std``, ``ndt_p<v>``,
-                          and ``log_h_k<knot>`` (that group's time course)
+                          ``log_h_k<knot>`` (that group's bound time course)
+                          and ``log_g_k<knot>`` (guess-rate time course)
         ``nll``         : float, negative log-likelihood (without the penalty)
         ``n_trials``    : int
         ``n_params``    : int, number of free parameters
@@ -570,15 +602,15 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     unknown = set(post_params) - set(POST_PARAMS)
     if unknown:
         raise ValueError(f"post_params must be a subset of {POST_PARAMS}; got {sorted(unknown)}.")
-    if time_course not in TIME_COURSES:
-        raise ValueError(f"time_course must be one of {TIME_COURSES}.")
+    if time_course not in TIME_COURSES or guess_time_course not in TIME_COURSES:
+        raise ValueError(f"time_course and guess_time_course must be one of {TIME_COURSES}.")
 
     x, lens, choice_pm, group_values, group_idx, post_mask = _prepare(data_table, group_col)
     G = len(group_values)
     if anchor not in knots:
         raise ValueError(f"anchor {anchor} must be one of the knots {tuple(knots)}.")
     lay = _Layout(G, post_params, len(ndt_values), time_course, len(knots), fixed, shared_params,
-                  anchor_idx=list(knots).index(anchor))
+                  anchor_idx=list(knots).index(anchor), guess_time_course=guess_time_course)
 
     if x0 is None:
         k = np.clip(lens - 2, 0, x.shape[1] - 1)
@@ -595,6 +627,7 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
             "sensory_std": np.array([np.log(max(0.3 * step_sd, 2e-3))]),
             "ndt_logits": np.zeros(len(ndt_values) - 1),
             "log_h": np.zeros(lay.n_shapes * lay.n_free_h),
+            "log_g": np.zeros(lay.n_gshapes * lay.n_free_h),
         }
         x0 = np.concatenate([start[name][:size] for name, size, _ in lay.spec])
 
@@ -603,7 +636,8 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values,
                                 p["ndt_probs"], n_quad=n_quad, wall=wall)
         nll = -np.sum(np.log(np.maximum(lik, _MIN_LIK)))
-        return nll + smooth_penalty * np.sum(np.diff(p["log_h"], axis=1) ** 2), nll
+        penalty = np.sum(np.diff(p["log_h"], axis=1) ** 2) + np.sum(np.diff(p["log_g"], axis=1) ** 2)
+        return nll + smooth_penalty * penalty, nll
 
     res = scipy.optimize.minimize(lambda t: objective(t)[0], x0, method="L-BFGS-B", bounds=lay.limits(),
                                   options={"maxfun": max_evals, "maxiter": max_evals})
@@ -620,8 +654,11 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     for v, pv in zip(ndt_values, p["ndt_probs"]):
         table[f"ndt_p{v}"] = pv
     lh = np.broadcast_to(p["log_h"], (G, len(knots)))
+    lg = np.broadcast_to(p["log_g"], (G, len(knots)))
     for ki, kn in enumerate(knots):
         table[f"log_h_k{kn}"] = lh[:, ki]
+    for ki, kn in enumerate(knots):
+        table[f"log_g_k{kn}"] = lg[:, ki]
     return {
         "params": table,
         "nll": float(objective(res.x)[1]),
@@ -637,7 +674,7 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
                              guess_rate=0.0, lapse_rate=0.0, anticipation_rate=0.0, sensory_std=0.0,
                              log_h=None, knots=KNOTS, ndt_values=NDT_VALUES, ndt_probs=(1.0, 0.0),
                              change_point=0, generative_mean_post=None, bound_scale_post=None,
-                             guess_rate_post=None, max_steps=200, wall=WALL, rng=None):
+                             guess_rate_post=None, max_steps=200, wall=WALL, rng=None, log_g=None):
     """
     Simulate trials from the stopping model (the generative model fit by fit_stopping_model).
 
@@ -668,6 +705,9 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     wall : float
         Displayed positions are clamped to +/-wall, as in the task.
     rng : np.random.Generator or None
+    log_g : sequence or None
+        Guess-rate time course at the knots (logit-scale shift, 0 at the
+        anchor knot; see fit_stopping_model); None = constant.
 
     Returns
     -------
@@ -696,6 +736,8 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     mult = _gamma_ppf(rng.random(n), bound_cv)
     hit_bound = np.abs(perceived) >= theta * mult[:, None]
     gr = np.where(lpost, post(guess_rate_post, guess_rate), guess_rate)
+    if log_g is not None:
+        gr = _shift_logit(gr, np.interp(np.arange(max_steps + 1), knots, np.asarray(log_g, float))[None, :])
     hit_guess = rng.random((n, max_steps + 1)) < gr
     hit_bound[:, 0] = False   # no evidence at the start frame; guesses there are allowed
 
@@ -847,6 +889,7 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
             len(cps), mean, std, f["bound_scale"], f["bound_cv"], f["guess_rate"], f["lapse_rate"],
             f["anticipation_rate"], f["sensory_std"],
             log_h=[f[f"log_h_k{kn}"] for kn in knots], knots=knots, ndt_values=ndt_values,
+            log_g=[f[f"log_g_k{kn}"] for kn in knots] if f"log_g_k{knots[0]}" in f else None,
             ndt_probs=[f[f"ndt_p{v}"] for v in ndt_values], change_point=cps,
             max_steps=max_steps, wall=wall, rng=rng, **post)
         sim.insert(0, "subject_index", subject)
