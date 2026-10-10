@@ -52,8 +52,9 @@ Given m, steps are independent: with ``q_j = P(|y_j| < b_j)`` and up/down
 crossing probabilities ``r_j^+ = P(y_j >= b_j)``, ``r_j^- = P(y_j <= -b_j)``, the
 probability of no commit through step k is
 ``S_k = (1 - anticipation_rate) * prod_{j=1..k} q_j (1 - guess_rate_j)``, and
-P(commit at k, right) = ``S_{k-1} [r_k^+ + q_k guess_rate_k P(y_k > 0)]``
-(left analogously). The integral over m is restricted, per trial, to the
+P(commit at k, right) = ``S_{k-1} [r_k^+ + guess_rate_k P(0 < y_k < b_k)]``
+(left analogously): a guess happens only when the bound isn't crossed, so its
+side is that of a perceived position inside the bound. The integral over m is restricted, per trial, to the
 window where the integrand varies (see ``_trial_likelihood_padded``); outside
 it the integrand is ~0 (bound crossed earlier) or constant (only guesses can
 commit). Lapses mix the choice with 1/2; each trial's likelihood
@@ -380,9 +381,13 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
             return width * (s_prev @ weights) + (1 - uc) * s_prev_guess
         g_k = gr[rows, k][:, None]
         pr_k = p_right[rows, k][:, None]
-        q_k = q[rows, k, :]
-        pr = width * ((s_prev * (up[rows, k, :] + q_k * g_k * pr_k)) @ weights)
-        pl = width * ((s_prev * (dn[rows, k, :] + q_k * g_k * (1 - pr_k))) @ weights)
+        up_k, dn_k = up[rows, k, :], dn[rows, k, :]
+        # A guess at k happens only if the bound wasn't crossed there, so its side is that of a
+        # perceived position inside the bound: P(0 < y < b) = P(y > 0) - P(y >= b), and likewise left.
+        in_r = np.clip(pr_k - up_k, 0.0, None)
+        in_l = np.clip(1 - pr_k - dn_k, 0.0, None)
+        pr = width * ((s_prev * (up_k + g_k * in_r)) @ weights)
+        pl = width * ((s_prev * (dn_k + g_k * in_l)) @ weights)
         pr += (1 - uc) * s_prev_guess * g_k[:, 0] * pr_k[:, 0]
         pl += (1 - uc) * s_prev_guess * g_k[:, 0] * (1 - pr_k[:, 0])
         return pr, pl
