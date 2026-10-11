@@ -813,8 +813,8 @@ def get_crossing_diagnostics(data_table):
     Per-trial incongruence and premature-crossing flags at the inferred crossing.
 
     Same definitions as ``compute_basic_props`` in
-    notebooks/Figure03S03_boundTest.ipynb, which uses them to ask whether NDT
-    variability and sensory noise explain the data:
+    notebooks/archive/Figure03S03_boundTest.ipynb (now Figure03S02_suboptimalBehavior),
+    which asks whether the stopping model reproduces them:
 
     - **incongruent**: the sign of the basic midpoint bound
       ``(steps[DT-1] + steps[DT]) / 2`` differs from the choice.

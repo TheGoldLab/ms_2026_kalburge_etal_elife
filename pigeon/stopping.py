@@ -244,6 +244,48 @@ def get_commit_hazard_table(data_table, ndt=1, wall=WALL):
     return out
 
 
+COMMIT_SOURCES = ("guess", "lapse", "timing", "sensory noise", "collapsing bound")
+
+
+def get_commit_sources(sim_table):
+    """
+    Which model mechanism produced each simulated trial's commitment and choice.
+
+    For trials simulated by simulate_stopping_trials and run through the
+    real-data bound pipeline (infer_bounds_like_data), each trial gets the
+    first matching source, in this order:
+
+    1. ``'guess'``: the commit was a guess (including start-frame guesses) or
+       an anticipation, not a bound crossing;
+    2. ``'lapse'``: the choice was random (lapse);
+    3. ``'timing'``: the pipeline placed the commit at the wrong step
+       (inferred ``DT`` differs from the true ``commit_step``, i.e. the
+       NDT assumed by get_bounds was not the one that occurred);
+    4. ``'sensory noise'``: a bound commit triggered by the perceived position
+       while the on-screen position had not reached the bound
+       (``true_crossed`` False);
+    5. ``'collapsing bound'``: none of the above. Applied to premature
+       crossings, these are trials where the pigeon had been farther out at
+       an earlier step, when the falling bound was still higher, than where
+       the subject committed.
+
+    Parameters
+    ----------
+    sim_table : pd.DataFrame
+        Simulated trials with ``commit_type``, ``lapse``, ``true_crossed``,
+        ``commit_step`` and the pipeline's ``DT``.
+
+    Returns
+    -------
+    pd.Series of labels from COMMIT_SOURCES (index of sim_table).
+    """
+    t = sim_table
+    src = np.select([t["commit_type"].isin(["guess", "anticipation"]).to_numpy(), t["lapse"].to_numpy(bool),
+                     (t["DT"] != t["commit_step"]).to_numpy(), ~t["true_crossed"].to_numpy(bool)],
+                    list(COMMIT_SOURCES[:4]), COMMIT_SOURCES[4])
+    return pd.Series(src, index=t.index, name="source")
+
+
 def get_plateau_at_limit(fits, rtol=0.02):
     """
     Flag fits whose bound plateau sits at a fit limit (no evidence-based stopping).
@@ -943,7 +985,9 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     pd.DataFrame with get_data_table-style columns ``steps``, ``RT``, ``choice``
     (0/1), ``correct``, ``change_point``, ``wall_hit``, plus ground truth:
     ``commit_step``, ``ndt``, ``commit_type`` ('anticipation', 'bound',
-    'guess', 'cap'), ``bound_multiplier``, ``lapse``.
+    'guess', 'cap'), ``bound_multiplier``, ``lapse``, and ``true_crossed``
+    (the on-screen position, not only the perceived one, was at or beyond
+    the trial's bound at the commit step; False for anticipations).
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -996,6 +1040,10 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     k[lant] = 0
     ctype[lant] = "anticipation"
 
+    # Whether the on-screen position itself had reached the bound at the commit step (a bound commit
+    # without it was triggered by sensory noise).
+    theta_k = np.broadcast_to(theta, (n, max_steps + 1))[rows, k] * mult
+    true_crossed = (np.abs(shown[rows, k]) >= theta_k) & (k > 0) & ~lant
     steps = [shown[tt, : rt[tt]] for tt in range(n)]
     return pd.DataFrame({
         "steps": steps,
@@ -1009,6 +1057,7 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
         "commit_type": ctype,
         "bound_multiplier": mult,
         "lapse": lapse & ~lant,
+        "true_crossed": true_crossed,
     })
 
 

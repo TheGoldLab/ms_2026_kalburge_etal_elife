@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_commit_type_probabilities,
-                             get_choice_probabilities, get_commit_hazard_table, get_effective_bounds, get_plateau_at_limit, simulate_stopping_trials, stopping_model_nll)
+                             get_choice_probabilities, get_commit_hazard_table, get_commit_sources, get_effective_bounds, get_plateau_at_limit, simulate_stopping_trials, stopping_model_nll)
 
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
             sensory_std=0.02)
@@ -207,3 +207,21 @@ def test_choice_probabilities_are_calibrated():
     pred = pr.groupby(b, observed=True).mean()
     assert np.allclose(obs, pred, atol=0.05)
     assert np.corrcoef(pr, d.choice)[0, 1] > 0.6
+
+
+def test_true_crossed_flags_noise_triggered_commits():
+    exact = _sim(3000, 0.02, 19, sensory_std=0.0, guess_rate=0.0)
+    lb = exact.commit_type == "bound"
+    assert exact.loc[lb, "true_crossed"].all()            # no noise: every bound commit is a true crossing
+    noisy = _sim(3000, 0.02, 19, sensory_std=0.1, guess_rate=0.0)
+    lb = noisy.commit_type == "bound"
+    assert 0.05 < 1 - noisy.loc[lb, "true_crossed"].mean() < 0.95   # noise triggers some commits early
+    assert not noisy.loc[noisy.commit_type == "anticipation", "true_crossed"].any()
+
+
+def test_commit_sources_priority():
+    t = pd.DataFrame({"commit_type": ["guess", "bound", "bound", "bound", "bound", "anticipation"],
+                      "lapse": [True, True, False, False, False, False],
+                      "DT": [3, 3, 4, 3, 3, 0], "commit_step": [3, 3, 3, 3, 3, 0],
+                      "true_crossed": [False, True, True, False, True, False]})
+    assert get_commit_sources(t).tolist() == ["guess", "lapse", "timing", "sensory noise", "collapsing bound", "guess"]
