@@ -813,7 +813,7 @@ def get_crossing_diagnostics(data_table):
     Per-trial incongruence and premature-crossing flags at the inferred crossing.
 
     Same definitions as ``compute_basic_props`` in
-    notebooks/archive/Figure03S03_boundTest.ipynb (now Figure03S02_suboptimalBehavior),
+    notebooks/archive/Figure03S03_boundTest.ipynb (now Figure03S03_suboptimalBehavior),
     which asks whether the stopping model reproduces them:
 
     - **incongruent**: the sign of the basic midpoint bound
