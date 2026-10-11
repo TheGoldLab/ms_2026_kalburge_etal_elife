@@ -191,6 +191,33 @@ def _shift_logit(rate, shift):
         return scipy.special.expit(scipy.special.logit(rate) + shift)
 
 
+def get_plateau_at_limit(fits, rtol=0.02):
+    """
+    Flag fits whose bound plateau sits at a fit limit (no evidence-based stopping).
+
+    ``bound_scale`` is bounded to [0.002, 2.0] during fitting. At the upper
+    limit the bound is never what triggers a commit (the subject responds
+    essentially at random: high guess and lapse rates); at the lower limit
+    any movement triggers one. Either way the plateau is not a bound
+    estimate, and figures exclude these subject-blocks from statistics (with
+    counts reported).
+
+    Parameters
+    ----------
+    fits : pd.DataFrame
+        Output of fit_stopping_models (``bound_scale`` column).
+    rtol : float
+        Relative distance from a limit that counts as at the limit.
+
+    Returns
+    -------
+    pd.Series of bool (index of fits); NaN plateaus are False.
+    """
+    lo, hi = np.exp(_LOG_POS_LIMITS)
+    b = fits["bound_scale"]
+    return (b <= lo * (1 + rtol)) | (b >= hi * (1 - rtol))
+
+
 def bound_time_course(fit_row, steps, knots=KNOTS, post=False):
     """
     Mean bound at each step for one fitted group.

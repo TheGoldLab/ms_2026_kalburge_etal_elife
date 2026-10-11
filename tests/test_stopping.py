@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_commit_type_probabilities,
-                             get_effective_bounds, simulate_stopping_trials, stopping_model_nll)
+                             get_effective_bounds, get_plateau_at_limit, simulate_stopping_trials, stopping_model_nll)
 
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
             sensory_std=0.02)
@@ -177,3 +177,8 @@ def test_commit_type_probabilities_are_calibrated():
     # Posterior probabilities average to the true fraction, overall and within true types' ordering.
     assert abs(pg[ok].mean() - is_guess[ok].mean()) < 0.015
     assert pg[ok & is_guess].mean() > pg[ok & ~is_guess].mean() + 0.3
+
+
+def test_plateau_at_limit_flags_both_limits():
+    f = pd.DataFrame({"bound_scale": [0.002, 0.00203, 0.05, 1.5, 1.97, 2.0, np.nan]})
+    assert get_plateau_at_limit(f).tolist() == [True, True, False, False, True, True, False]
