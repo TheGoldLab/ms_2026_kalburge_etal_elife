@@ -26,7 +26,9 @@ Pipeline
 
 Also ``get_sequential_bound_stats``: per-sequence trial-to-trial structure of
 |bound| (regression of the change on the previous value, SD, lag-1
-autocorrelation), used by the Figure 3 supplements on sequential structure.
+autocorrelation), and ``get_post_error_bound_effect``: the change in |bound|
+after an error, controlling for the previous trial's |bound|; both used by the
+Figure 3 supplement on sequential structure.
 """
 
 import numpy as np
@@ -474,6 +476,76 @@ def get_sequential_bound_stats(data_table, group_cols=("subject_index", "block_i
             stats["delta_slope"] = scipy.stats.linregress(prev, nxt - prev).slope
             stats["sd"] = np.std(v, ddof=1)
             stats["lag1_r"] = np.corrcoef(prev, nxt)[0, 1]
+        rows[key] = stats
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index = pd.MultiIndex.from_tuples(out.index, names=list(group_cols)) if len(group_cols) > 1 \
+        else pd.Index(out.index, name=group_cols[0])
+    return out
+
+
+def get_post_error_bound_effect(data_table, group_cols=("subject_index", "block_index"), value_col="abs_bound",
+                                min_post_error=3, min_trials=10):
+    """
+    Relative change in the bound on the trial after an error.
+
+    Within each group (by default one subject's block), trials are ordered by
+    ``trial_number`` and the value is divided by the group's median, so effects
+    are fractions of the subject's typical bound. For every trial n with a
+    finite value whose immediately preceding trial (trial_number n - 1) is in
+    the table, the least-squares regression
+
+        value(n) / median = b0 + b_error * error(n-1) + b_prev * prev(n-1)
+
+    is fit, where ``error`` = 1 - ``correct`` of the previous trial and ``prev``
+    is the previous trial's relative value minus its group mean. When the
+    previous trial has no finite value (e.g. a one-step guess, whose bound
+    cannot be measured), ``prev`` is set to 0, i.e. the mean is imputed; the
+    regressor is there so that carryover of the bound (errors are more common
+    after low bounds) is not counted as a post-error effect.
+
+    Pass every trial of each sequence (so that previous trials are found), with
+    ``value_col`` set to NaN on trials that should not serve as trial n.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Trials with ``trial_number``, ``correct``, ``value_col`` and
+        ``group_cols``.
+    group_cols : sequence of str
+        Columns defining one sequence (add ``'rep'`` for simulated repetitions).
+    value_col : str
+    min_post_error : int
+        Groups with fewer usable post-error trials get NaN coefficients.
+    min_trials : int
+        Groups with fewer usable trials in all get NaN coefficients.
+
+    Returns
+    -------
+    pd.DataFrame indexed by ``group_cols`` with ``n_trials``, ``n_post_error``,
+    ``n_prev_imputed``, ``post_error_effect`` (b_error) and ``prev_coef``
+    (b_prev).
+    """
+    rows = {}
+    for key, g in data_table.groupby(list(group_cols)):
+        g = g.sort_values("trial_number")
+        v = g[value_col].to_numpy(float)
+        v = v / np.nanmedian(v) if np.isfinite(v).any() else v
+        tn = g["trial_number"].to_numpy()
+        lprev = np.r_[False, np.diff(tn) == 1]
+        prev_v = np.r_[np.nan, v[:-1]]
+        prev_err = np.r_[np.nan, 1.0 - g["correct"].to_numpy(float)[:-1]]
+        lu = lprev & np.isfinite(v) & np.isfinite(prev_err)
+        prev_c = prev_v[lu] - np.nanmean(prev_v[lu]) if np.isfinite(prev_v[lu]).any() else prev_v[lu]
+        limp = ~np.isfinite(prev_c)
+        prev_c[limp] = 0.0
+        err = prev_err[lu]
+        stats = {"n_trials": int(lu.sum()), "n_post_error": int(err.sum()), "n_prev_imputed": int(limp.sum()),
+                 "post_error_effect": np.nan, "prev_coef": np.nan}
+        if stats["n_trials"] >= min_trials and stats["n_post_error"] >= min_post_error \
+                and stats["n_post_error"] < stats["n_trials"]:
+            X = np.column_stack([np.ones(len(err)), err, prev_c])
+            b = np.linalg.lstsq(X, v[lu], rcond=None)[0]
+            stats["post_error_effect"], stats["prev_coef"] = b[1], b[2]
         rows[key] = stats
     out = pd.DataFrame.from_dict(rows, orient="index")
     out.index = pd.MultiIndex.from_tuples(out.index, names=list(group_cols)) if len(group_cols) > 1 \
