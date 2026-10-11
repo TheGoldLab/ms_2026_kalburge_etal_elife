@@ -263,7 +263,8 @@ def get_fit_vs_median_bounds(data_table, fits, bias_file, group_col="condition",
     cutoff; plus a finite, nonzero bound), on raw positions and after
     ``apply_bias_corrections``. The fitted bound is the mean of
     ``get_effective_bounds`` over the same trials, plus ``bound_scale`` (the
-    mean bound at the anchor step).
+    bound plateau: the mean bound at the knee, or at the anchor step for the
+    knots form).
 
     Parameters
     ----------
