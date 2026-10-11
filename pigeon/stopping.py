@@ -1062,6 +1062,17 @@ def get_commit_type_probabilities(data_table, fits, group_col="condition", knots
     and subjects or groups without a fit.
     """
     out = pd.Series(np.nan, index=data_table.index, name="p_guess")
+    for d, args, kwargs in _subject_likelihood_inputs(data_table, fits, group_col, knots):
+        lik, lik_guess, lik_wall = _trial_likelihood(*args, **kwargs, ndt_values=ndt_values, n_quad=n_quad,
+                                                     wall=wall, return_parts=True)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            pg = np.where(lik_wall > 0, np.nan, lik_guess / lik)
+        out.loc[d.index] = pg
+    return out
+
+
+def _subject_likelihood_inputs(data_table, fits, group_col, knots):
+    """Per subject with fits: (trials, positional args, keyword args) for _trial_likelihood."""
     for subject, d in data_table.groupby("subject_index"):
         f = fits[(fits["subject_index"] == subject) & fits["bound_scale"].notna()]
         d = d[d[group_col].isin(f["group"])]
@@ -1080,12 +1091,44 @@ def get_commit_type_probabilities(data_table, fits, group_col="condition", knots
         if "knee" in p:
             for name in KNEE_PARAMS:
                 q[name] = p[name]
-        lik, lik_guess, lik_wall = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, q, knots,
-                                                     ndt_values, p["ndt_probs"], n_quad=n_quad, wall=wall,
-                                                     return_parts=True)
+        yield d, (x, lens, choice_pm, group_idx, post_mask, q, knots), {"ndt_probs": p["ndt_probs"]}
+
+
+def get_choice_probabilities(data_table, fits, group_col="condition", knots=KNOTS, ndt_values=NDT_VALUES,
+                             n_quad=24, wall=WALL):
+    """
+    Model probability of a rightward choice on each trial, given its trajectory and RT.
+
+    P(right | steps, RT) = L(RT, right) / (L(RT, right) + L(RT, left)) under the
+    subject's fitted parameters: the model's prediction of the choice once the
+    trial's positions up to the key press and its timing are known (it uses the
+    positions only up to the press, so it does not peek at anything the
+    subject could not have seen).
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Trials (``subject_index``, ``group_col``, ``steps``, ``choice``,
+        optional ``change_point``).
+    fits : pd.DataFrame
+        Output of fit_stopping_models with the same grouping.
+    group_col, knots, ndt_values, n_quad, wall
+        As in fit_stopping_model.
+
+    Returns
+    -------
+    pd.Series ``p_right`` (index of data_table); NaN for subjects or groups
+    without a fit.
+    """
+    out = pd.Series(np.nan, index=data_table.index, name="p_right")
+    for d, (x, lens, _, group_idx, post_mask, q, knots_), kwargs in _subject_likelihood_inputs(
+            data_table, fits, group_col, knots):
+        common = dict(ndt_values=ndt_values, n_quad=n_quad, wall=wall, **kwargs)
+        ones = np.ones(len(lens))
+        lik_r = _trial_likelihood(x, lens, ones, group_idx, post_mask, q, knots_, **common)
+        lik_l = _trial_likelihood(x, lens, -ones, group_idx, post_mask, q, knots_, **common)
         with np.errstate(invalid="ignore", divide="ignore"):
-            pg = np.where(lik_wall > 0, np.nan, lik_guess / lik)
-        out.loc[d.index] = pg
+            out.loc[d.index] = lik_r / (lik_r + lik_l)
     return out
 
 

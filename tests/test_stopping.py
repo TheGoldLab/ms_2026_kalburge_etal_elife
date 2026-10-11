@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_commit_type_probabilities,
-                             get_commit_hazard_table, get_effective_bounds, get_plateau_at_limit, simulate_stopping_trials, stopping_model_nll)
+                             get_choice_probabilities, get_commit_hazard_table, get_effective_bounds, get_plateau_at_limit, simulate_stopping_trials, stopping_model_nll)
 
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
             sensory_std=0.02)
@@ -193,3 +193,17 @@ def test_commit_hazard_table_risk_set():
     assert h.trial.tolist() == [0, 0, 0, 1]
     assert h.commit.tolist() == [False, False, True, False]
     assert np.allclose(h.abs_x, [0.1, 0.2, 0.3, 0.1]) and (h.condition == "B1").all()
+
+
+def test_choice_probabilities_are_calibrated():
+    d = _sim(20000, 0.03, 18, log_h=COLLAPSE).assign(subject_index=1, condition="B1")  # bins need n >= ~150
+    fit = pd.DataFrame([{"subject_index": 1, "group": "B1", **TRUE, "ndt_p1": NDT_PROBS[0], "ndt_p2": NDT_PROBS[1],
+                         **{f"log_h_k{k}": v for k, v in zip(KNOTS, COLLAPSE)}}])
+    pr = get_choice_probabilities(d, fit)
+    assert pr.between(0, 1).all()
+    # Calibrated: within bins of predicted P(right), the observed fraction of right choices matches.
+    b = pd.cut(pr, [0, 0.1, 0.3, 0.7, 0.9, 1.0], include_lowest=True)
+    obs = d.choice.groupby(b, observed=True).mean()
+    pred = pr.groupby(b, observed=True).mean()
+    assert np.allclose(obs, pred, atol=0.05)
+    assert np.corrcoef(pr, d.choice)[0, 1] > 0.6
