@@ -191,6 +191,59 @@ def _shift_logit(rate, shift):
         return scipy.special.expit(scipy.special.logit(rate) + shift)
 
 
+def get_commit_hazard_table(data_table, ndt=1, wall=WALL):
+    """
+    Step-by-step risk set for a model-free commit hazard.
+
+    For each trial, the commit step is taken as ``k = RT - ndt - 1`` (the
+    ``DT`` convention of ``get_bounds`` with a fixed NDT). Every step
+    ``j = 1..k`` at which the subject had not yet committed contributes one
+    row: the pigeon's distance from center ``|x_j|`` and whether the commit
+    happened at that step. Steps at or after the pigeon first reached the
+    wall are left out (a position held at the wall carries no new
+    information), as are RT = 1 trials (key pressed on the first frame) and
+    trials with ``k < 1``. Averaging ``commit`` within (step, |x|) bins gives
+    P(commit at step j | |x_j|, not committed before j). Apply the same
+    function to real and simulated trials so both share the convention.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Trials with ``steps``, ``RT``, and any grouping columns to carry
+        (``subject_index``, ``condition`` if present).
+    ndt : int
+        NDT (steps) used to place the commit.
+    wall : float
+        Screen-edge position.
+
+    Returns
+    -------
+    pd.DataFrame with ``trial`` (index label in data_table), ``step``,
+    ``abs_x``, ``commit`` (bool), plus ``subject_index`` and ``condition``
+    when present in data_table.
+    """
+    keep = [c for c in ("subject_index", "condition") if c in data_table]
+    parts = []
+    for idx, steps, rt in zip(data_table.index, data_table["steps"], data_table["RT"]):
+        rt = int(rt)
+        k = rt - ndt - 1
+        if rt == 1 or k < 1:
+            continue
+        x = np.abs(np.asarray(steps, float))
+        at_wall = np.nonzero(x >= wall - 1e-9)[0]
+        last = min(k, at_wall[0] - 1 if len(at_wall) else k)
+        if last < 1:
+            continue
+        j = np.arange(1, last + 1)
+        parts.append(pd.DataFrame({"trial": idx, "step": j, "abs_x": x[j], "commit": j == k}))
+    if not parts:
+        return pd.DataFrame(columns=["trial", "step", "abs_x", "commit"] + keep)
+    out = pd.concat(parts, ignore_index=True)
+    for c in keep:
+        out[c] = data_table.loc[out["trial"], c].to_numpy()
+    return out
+
+
 def get_plateau_at_limit(fits, rtol=0.02):
     """
     Flag fits whose bound plateau sits at a fit limit (no evidence-based stopping).

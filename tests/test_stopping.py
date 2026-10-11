@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_commit_type_probabilities,
-                             get_effective_bounds, get_plateau_at_limit, simulate_stopping_trials, stopping_model_nll)
+                             get_commit_hazard_table, get_effective_bounds, get_plateau_at_limit, simulate_stopping_trials, stopping_model_nll)
 
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
             sensory_std=0.02)
@@ -182,3 +182,14 @@ def test_commit_type_probabilities_are_calibrated():
 def test_plateau_at_limit_flags_both_limits():
     f = pd.DataFrame({"bound_scale": [0.002, 0.00203, 0.05, 1.5, 1.97, 2.0, np.nan]})
     assert get_plateau_at_limit(f).tolist() == [True, True, False, False, True, True, False]
+
+
+def test_commit_hazard_table_risk_set():
+    d = pd.DataFrame({"steps": [[0, 0.1, 0.2, 0.3, 0.4], [0, 0.1, 0.8, 0.75, 0.75, 0.75], [0], [0, 0.1]],
+                      "RT": [5, 6, 1, 2], "subject_index": 1, "condition": "B1"})
+    h = get_commit_hazard_table(d, ndt=1)
+    # Trial 0: commit at k = 3, at risk at steps 1-3. Trial 1: wall at step 2, so only step 1 (no commit).
+    # Trial 2 (RT = 1) and trial 3 (k = 0) contribute nothing.
+    assert h.trial.tolist() == [0, 0, 0, 1]
+    assert h.commit.tolist() == [False, False, True, False]
+    assert np.allclose(h.abs_x, [0.1, 0.2, 0.3, 0.1]) and (h.condition == "B1").all()
