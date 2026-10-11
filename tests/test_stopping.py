@@ -220,8 +220,11 @@ def test_true_crossed_flags_noise_triggered_commits():
 
 
 def test_commit_sources_priority():
-    t = pd.DataFrame({"commit_type": ["guess", "bound", "bound", "bound", "bound", "anticipation"],
-                      "lapse": [True, True, False, False, False, False],
-                      "DT": [3, 3, 4, 3, 3, 0], "commit_step": [3, 3, 3, 3, 3, 0],
-                      "true_crossed": [False, True, True, False, True, False]})
-    assert get_commit_sources(t).tolist() == ["guess", "lapse", "timing", "sensory noise", "collapsing bound", "guess"]
+    up = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+    t = pd.DataFrame({"commit_type": ["guess", "bound", "bound", "bound", "bound", "bound", "anticipation"],
+                      "lapse": [True, True, False, False, False, False, False],
+                      "DT": [3, 3, 4, 3, 3, 3, 0], "commit_step": [3, 3, 3, 3, 3, 3, 0],
+                      "true_crossed": [False, True, True, False, True, True, False],
+                      "steps": [up, up, up, up, [0, 0.1, 0.2, -0.1, -0.2, -0.3], up, [0]]})
+    assert get_commit_sources(t).tolist() == ["guess", "lapse", "timing", "sensory noise", "measurement",
+                                              "collapsing bound", "guess"]

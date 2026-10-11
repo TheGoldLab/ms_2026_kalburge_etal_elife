@@ -244,7 +244,7 @@ def get_commit_hazard_table(data_table, ndt=1, wall=WALL):
     return out
 
 
-COMMIT_SOURCES = ("guess", "lapse", "timing", "sensory noise", "collapsing bound")
+COMMIT_SOURCES = ("guess", "lapse", "timing", "sensory noise", "measurement", "collapsing bound")
 
 
 def get_commit_sources(sim_table):
@@ -262,9 +262,13 @@ def get_commit_sources(sim_table):
        (inferred ``DT`` differs from the true ``commit_step``, i.e. the
        NDT assumed by get_bounds was not the one that occurred);
     4. ``'sensory noise'``: a bound commit triggered by the perceived position
-       while the on-screen position had not reached the bound
+       while the on-screen position had not reached the bound on that side
        (``true_crossed`` False);
-    5. ``'collapsing bound'``: none of the above. Applied to premature
+    5. ``'measurement'``: the pigeon crossed zero between steps ``DT - 1``
+       and ``DT``, so the midpoint used by get_bounds and
+       get_crossing_diagnostics can fall on the other side from the position
+       at the commit;
+    6. ``'collapsing bound'``: none of the above. Applied to premature
        crossings, these are trials where the pigeon had been farther out at
        an earlier step, when the falling bound was still higher, than where
        the subject committed.
@@ -272,17 +276,23 @@ def get_commit_sources(sim_table):
     Parameters
     ----------
     sim_table : pd.DataFrame
-        Simulated trials with ``commit_type``, ``lapse``, ``true_crossed``,
-        ``commit_step`` and the pipeline's ``DT``.
+        Simulated trials with ``steps``, ``commit_type``, ``lapse``,
+        ``true_crossed``, ``commit_step`` and the pipeline's ``DT``.
 
     Returns
     -------
     pd.Series of labels from COMMIT_SOURCES (index of sim_table).
     """
     t = sim_table
+
+    def _zero_crossing(steps, dt):
+        dt = int(dt) if np.isfinite(dt) else -1
+        return 1 <= dt < len(steps) and np.sign(steps[dt - 1]) * np.sign(steps[dt]) < 0
+
+    zero_cross = np.array([_zero_crossing(np.asarray(st, float), dt) for st, dt in zip(t["steps"], t["DT"])])
     src = np.select([t["commit_type"].isin(["guess", "anticipation"]).to_numpy(), t["lapse"].to_numpy(bool),
-                     (t["DT"] != t["commit_step"]).to_numpy(), ~t["true_crossed"].to_numpy(bool)],
-                    list(COMMIT_SOURCES[:4]), COMMIT_SOURCES[4])
+                     (t["DT"] != t["commit_step"]).to_numpy(), ~t["true_crossed"].to_numpy(bool), zero_cross],
+                    list(COMMIT_SOURCES[:5]), COMMIT_SOURCES[5])
     return pd.Series(src, index=t.index, name="source")
 
 
@@ -987,7 +997,8 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     ``commit_step``, ``ndt``, ``commit_type`` ('anticipation', 'bound',
     'guess', 'cap'), ``bound_multiplier``, ``lapse``, and ``true_crossed``
     (the on-screen position, not only the perceived one, was at or beyond
-    the trial's bound at the commit step; False for anticipations).
+    the trial's bound at the commit step, on the side the perceived position
+    was on; False for anticipations).
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -1040,10 +1051,11 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     k[lant] = 0
     ctype[lant] = "anticipation"
 
-    # Whether the on-screen position itself had reached the bound at the commit step (a bound commit
-    # without it was triggered by sensory noise).
+    # Whether the on-screen position itself had reached the bound at the commit step, on the side the
+    # perceived position crossed (a bound commit without it was triggered by sensory noise, including
+    # noise that put the perceived position across the bound on the other side).
     theta_k = np.broadcast_to(theta, (n, max_steps + 1))[rows, k] * mult
-    true_crossed = (np.abs(shown[rows, k]) >= theta_k) & (k > 0) & ~lant
+    true_crossed = (shown[rows, k] * side >= theta_k) & (k > 0) & ~lant
     steps = [shown[tt, : rt[tt]] for tt in range(n)]
     return pd.DataFrame({
         "steps": steps,
