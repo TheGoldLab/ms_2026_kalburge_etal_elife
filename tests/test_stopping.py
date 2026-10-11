@@ -4,8 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_commit_type_probabilities,
-                             get_choice_probabilities, get_commit_hazard_table, get_commit_sources, get_effective_bounds, get_plateau_at_limit, simulate_stopping_trials, stopping_model_nll)
+from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_choice_probabilities,
+                             get_commit_hazard_table, get_commit_sources, get_commit_type_probabilities,
+                             get_effective_bounds, get_plateau_at_limit, simulate_stopping_data_table,
+                             simulate_stopping_trials, stopping_model_nll)
 
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
             sensory_std=0.02)
@@ -228,3 +230,24 @@ def test_commit_sources_priority():
                       "steps": [up, up, up, up, [0, 0.1, 0.2, -0.1, -0.2, -0.3], up, [0]]})
     assert get_commit_sources(t).tolist() == ["guess", "lapse", "timing", "sensory noise", "measurement",
                                               "collapsing bound", "guess"]
+
+
+def test_fit_with_fixed_shape_noise_and_ndt():
+    knee = (0.8, 3.5, -0.03)
+    d = _sim(3000, 0.02, 21, knee_shape=knee)
+    fixed = {"log_h_start": knee[0], "knee": knee[1], "sensory_std": TRUE["sensory_std"], "ndt_probs": NDT_PROBS}
+    r = fit_stopping_model(d, group_col=None, fixed=fixed)
+    p = r["params"].iloc[0]
+    assert r["success"] and r["n_params"] == 5 + 1          # five group parameters + the late slope
+    assert np.isclose(p["ndt_p1"], NDT_PROBS[0]) and np.isclose(p["knee"], knee[1])
+    assert abs(p["late_slope"] - knee[2]) < 0.02
+    r0 = fit_stopping_model(d, group_col=None, fixed={**fixed, "late_slope": 0.0})
+    assert r0["nll"] > r["nll"] + 2                        # a flat late segment fits worse
+
+
+def test_simulated_data_table_keeps_trial_order():
+    d = pd.DataFrame({"subject_index": 1, "condition": "B1", "block_index": 1, "snr": 0.2, "step_std": 0.1,
+                      "trial_number": [12, 10, 11, 15]})
+    fit = pd.DataFrame([{"subject_index": 1, "group": "B1", **TRUE, "ndt_p1": NDT_PROBS[0], "ndt_p2": NDT_PROBS[1]}])
+    s = simulate_stopping_data_table(d, fit, group_col="condition", num_reps=2, rng=np.random.default_rng(0))
+    assert s.trial_number.tolist() == [12, 10, 11, 15] * 2 and s.rep.tolist() == [0] * 4 + [1] * 4

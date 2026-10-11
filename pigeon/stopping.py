@@ -634,6 +634,12 @@ class _Layout:
         self.knee = time_course_form == "knee" and time_course != "flat"
         self.post_params = tuple(q for q in POST_PARAMS if q in post_params)
         self.fixed = dict(fixed or {})
+        if "ndt_probs" in self.fixed:
+            # Fixed NDT probabilities are held as fixed logits relative to the first NDT value.
+            pr = np.asarray(self.fixed.pop("ndt_probs"), float)
+            if len(pr) != n_ndt:
+                raise ValueError(f"fixed ndt_probs needs {n_ndt} values; got {len(pr)}.")
+            self.fixed["ndt_logits"] = np.log(np.maximum(pr[1:], 1e-12)) - np.log(max(pr[0], 1e-12))
         self.shared = tuple(q for q in GROUP_PARAMS if q in shared_params)
         self.n_shapes = {"flat": 0, "shared": 1, "per_group": n_groups}[time_course]
         if n_tc_groups is not None:
@@ -681,7 +687,8 @@ class _Layout:
             p.setdefault(f"{name}_post", p[name])
         p["sensory_std"] = (float(self.fixed["sensory_std"]) if "sensory_std" in self.fixed
                             else float(np.exp(out["sensory_std"][0])))
-        logits = np.r_[0.0, out.get("ndt_logits", np.zeros(0))]
+        logits = np.r_[0.0, self.fixed["ndt_logits"] if "ndt_logits" in self.fixed
+                       else out.get("ndt_logits", np.zeros(0))]
         p["ndt_probs"] = np.exp(logits - scipy.special.logsumexp(logits))
         free_h = out.get("log_h", np.zeros(0)).reshape(max(self.n_shapes, 1), -1) \
             if self.n_shapes and not self.knee else np.zeros((1, self.n_free_h))
@@ -784,7 +791,10 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         NDT support; probabilities are fit and shared across groups.
     fixed : dict or None
         Parameters held fixed at natural-scale values, e.g.
-        ``{'sensory_std': 0.0}`` (exact crossings) or ``{'guess_rate': 0.0}``.
+        ``{'sensory_std': 0.0}`` (exact crossings) or ``{'guess_rate': 0.0}``;
+        ``'ndt_probs'`` (one probability per ndt value) fixes the NDT
+        distribution, and the knee-form parameters can be fixed too (one value
+        for all shapes).
     smooth_penalty : float
         Weight on squared adjacent differences of log h (0 = none). Default 2
         (prior SD 0.5 on each log change).
@@ -1277,7 +1287,9 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
     Returns
     -------
     pd.DataFrame from simulate_stopping_trials plus ``subject_index``,
-    ``group_col``, ``block_index``, ``snr`` (abs), ``rep``.
+    ``group_col``, ``block_index``, ``snr`` (abs), ``rep``, and
+    ``trial_number`` (that of the real trial each simulated trial replaces,
+    if data_table has one; within a repetition, trials keep the real order).
     """
     if "time_course_group" in fits:
         raise ValueError("Fits with time_course_col (one row per group x time-course value) are not supported here.")
@@ -1313,6 +1325,10 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
         sim.insert(0, "subject_index", subject)
         sim[group_col], sim["block_index"], sim["snr"] = group, block, mean / std
         sim["rep"] = np.repeat(np.arange(num_reps), len(cell))
+        if "trial_number" in cell:
+            # Each repetition replays the cell's trials in their real order, so sequential analyses can
+            # use the real trial numbers.
+            sim["trial_number"] = np.tile(cell["trial_number"].to_numpy(), num_reps)
         out.append(sim)
     return pd.concat(out, ignore_index=True)
 

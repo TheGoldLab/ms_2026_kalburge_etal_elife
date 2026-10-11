@@ -23,6 +23,10 @@ Pipeline
    subject and block, the tau only for "good" fits: eligible, converged
    within the fit window (not censored at ``max_trial``), values elsewhere
    are NaN.
+
+Also ``get_sequential_bound_stats``: per-sequence trial-to-trial structure of
+|bound| (regression of the change on the previous value, SD, lag-1
+autocorrelation), used by the Figure 3 supplements on sequential structure.
 """
 
 import numpy as np
@@ -424,3 +428,54 @@ def get_tau_exclusion_mask(data_table, good_tau):
     tau = tau_long.reindex(key).to_numpy()
     drop = np.isfinite(tau) & (data_table["trial_number"].to_numpy() < np.ceil(np.nan_to_num(tau)))
     return pd.Series(~drop, index=data_table.index)
+
+
+def get_sequential_bound_stats(data_table, group_cols=("subject_index", "block_index"), value_col="abs_bound",
+                               min_trials=20):
+    """
+    Trial-to-trial structure of the bound within each sequence of trials.
+
+    For each group (by default one subject's block), trials are ordered by
+    ``trial_number`` and three statistics of the value sequence are computed:
+
+    - ``delta_slope``: slope of the regression of the change from one trial to
+      the next on the earlier trial's value (-1 = independent draws around a
+      constant mean, i.e. pure regression to the mean; values above -1 mean
+      the value carries over to the next trial);
+    - ``sd``: standard deviation of the values (ddof = 1);
+    - ``lag1_r``: Pearson correlation between consecutive values.
+
+    Trial selection is the caller's job (pass only the trials to use, in any
+    order); rows with a non-finite value are dropped, and groups with fewer
+    than ``min_trials`` remaining trials get NaN statistics.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        Trials with ``trial_number``, ``value_col`` and ``group_cols``.
+    group_cols : sequence of str
+        Columns defining one sequence (e.g. add ``'rep'`` for simulated
+        repetitions).
+    value_col : str
+    min_trials : int
+
+    Returns
+    -------
+    pd.DataFrame indexed by ``group_cols`` with ``n_trials``, ``delta_slope``,
+    ``sd``, ``lag1_r``.
+    """
+    rows = {}
+    for key, g in data_table.groupby(list(group_cols)):
+        v = g.sort_values("trial_number")[value_col].to_numpy(float)
+        v = v[np.isfinite(v)]
+        stats = {"n_trials": len(v), "delta_slope": np.nan, "sd": np.nan, "lag1_r": np.nan}
+        if len(v) >= min_trials and np.ptp(v[:-1]) > 0 and np.ptp(v[1:]) > 0:
+            prev, nxt = v[:-1], v[1:]
+            stats["delta_slope"] = scipy.stats.linregress(prev, nxt - prev).slope
+            stats["sd"] = np.std(v, ddof=1)
+            stats["lag1_r"] = np.corrcoef(prev, nxt)[0, 1]
+        rows[key] = stats
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index = pd.MultiIndex.from_tuples(out.index, names=list(group_cols)) if len(group_cols) > 1 \
+        else pd.Index(out.index, name=group_cols[0])
+    return out
