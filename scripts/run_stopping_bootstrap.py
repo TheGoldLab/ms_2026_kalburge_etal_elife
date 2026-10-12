@@ -1,17 +1,21 @@
 """Parametric bootstrap of the stopping model on the real OL and MX subjects.
 
-Simulates every subject from their own main-variant fit
+Simulates every subject NUM_REPS times from their own main-variant fit
 (data/processed/stopping_fits_main.pkl), on their real trial structure (same
-blocks, trial counts, SNRs and step statistics), refits the simulated data
-with the same defaults, and saves true vs. fitted parameters. This checks
+blocks, trial counts, SNRs and step statistics), refits each simulated data
+set with the same defaults, and saves true vs. fitted parameters. The spread
+of a subject's refits gives a confidence interval on their parameters
+(e.g. the bound plateau). This checks
 whether sensory noise, bound variability (CV) and guessing can be told apart
 for these subjects at their own parameter values, rather than over generic
 recovery ranges.
 
-Writes data/processed/stopping_bootstrap.pkl (one row per subject x block).
-Run from the project root (after run_stopping_fits.py main):
+Writes data/processed/stopping_bootstrap.pkl (one row per subject x block x
+replicate, column ``rep``). The knots-form single-replicate run of 2026-10-10
+is archived in data/processed/stopping_fits_round3_knots/. Run from the
+project root (after run_stopping_fits.py main):
 
-    nohup uv run python scripts/run_stopping_bootstrap.py > data/processed/stopping_bootstrap.log 2>&1 &
+    PYTHONPATH=. nohup uv run python scripts/run_stopping_bootstrap.py > data/processed/stopping_bootstrap.log 2>&1 &
 """
 
 import time
@@ -24,9 +28,10 @@ from pigeon.stopping import fit_stopping_models, get_stopping_model_trials, simu
 
 PROCESSED = Path("data/processed")
 DATASETS = {"OL": [1, 2, 3, 4, 5, 6], "MX": [1, 2, 3]}
-SEED = 20261010
+SEED = 20261011
+NUM_REPS = 10
 PARAMS = ["bound_scale", "bound_cv", "guess_rate", "lapse_rate", "anticipation_rate",
-          "sensory_std", "ndt_p1", "log_h_k1", "log_h_k16"]
+          "sensory_std", "ndt_p1", "log_h_start", "knee", "late_slope"]
 
 
 def log(msg):
@@ -40,13 +45,17 @@ def main():
     for task, blocks in DATASETS.items():
         d = get_stopping_model_trials(task, blocks)
         f_true = fits[fits.task == task]
-        sim = simulate_stopping_data_table(d, f_true, group_col="condition", num_reps=1, rng=rng)
+        sim = simulate_stopping_data_table(d, f_true, group_col="condition", num_reps=NUM_REPS, rng=rng)
+        # Each replicate is fit as its own subject-session (ids subject * 100 + rep).
+        sim["subject_index"] = sim["subject_index"] * 100 + sim["rep"]
         t0 = time.time()
         f_fit = fit_stopping_models(sim, group_col="condition")
-        log(f"{task}: refit {f_fit.subject_index.nunique()} simulated subjects in {(time.time() - t0) / 60:.1f} min; "
+        log(f"{task}: refit {f_fit.subject_index.nunique()} simulated sessions in {(time.time() - t0) / 60:.1f} min; "
             f"{int((~f_fit.groupby('subject_index').success.first()).sum())} did not converge")
+        f_fit["rep"] = f_fit["subject_index"] % 100
+        f_fit["subject_index"] = f_fit["subject_index"] // 100
         m = f_true[["subject_index", "group"] + PARAMS].merge(
-            f_fit[["subject_index", "group", "success"] + PARAMS], on=["subject_index", "group"],
+            f_fit[["subject_index", "group", "rep", "success"] + PARAMS], on=["subject_index", "group"],
             suffixes=("_true", "_fit"))
         out.append(m.assign(task=task))
     pd.concat(out, ignore_index=True).to_pickle(PROCESSED / "stopping_bootstrap.pkl")
