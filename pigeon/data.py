@@ -857,6 +857,44 @@ def get_crossing_diagnostics(data_table):
     return pd.DataFrame({"incongruent": incong, "premature_crossing": early}, index=data_table.index)
 
 
+def get_steps_before_decision(data_table, num_steps=2):
+    """
+    Signed sizes of the last steps before the decision, toward the choice.
+
+    ``step_0`` is the step into the decision position, ``steps[DT] -
+    steps[DT-1]`` (the step whose midpoint is the basic bound estimate);
+    ``step_1`` is the step before it, ``steps[DT-1] - steps[DT-2]``; and so on.
+    Each is multiplied by the choice sign (+1 right, -1 left), so positive
+    values move toward the side chosen.
+
+    Parameters
+    ----------
+    data_table : pd.DataFrame
+        ``steps`` (cumulative positions, ``steps[0]`` = start), ``choice`` (0/1)
+        and ``DT`` columns.
+    num_steps : int
+        Number of steps back from the decision to return.
+
+    Returns
+    -------
+    pd.DataFrame with columns ``step_0`` ... ``step_{num_steps-1}``, same index
+    as data_table; NaN where the step does not exist (DT too small, DT beyond
+    the recorded steps, or a non-finite DT).
+    """
+    choices_pm = 2 * data_table["choice"].to_numpy(float) - 1
+    dts = data_table["DT"].to_numpy(float)
+    out = np.full((len(data_table), num_steps), np.nan)
+    for ii, sc in enumerate(data_table["steps"]):
+        if sc is None or not np.isfinite(dts[ii]):
+            continue
+        sc = np.asarray(sc, float)
+        t = int(dts[ii])
+        for kk in range(num_steps):
+            if t - kk - 1 >= 0 and t - kk < len(sc):
+                out[ii, kk] = (sc[t - kk] - sc[t - kk - 1]) * choices_pm[ii]
+    return pd.DataFrame(out, columns=[f"step_{kk}" for kk in range(num_steps)], index=data_table.index)
+
+
 def get_good_trial_array(data_table, min_dt=2, min_trial_number=10,
                          block_index=None, apply_rt_cutoff=True):
     """
