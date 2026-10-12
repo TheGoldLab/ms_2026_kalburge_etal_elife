@@ -12,3 +12,15 @@ dependencies = [
     "matplotlib>=3.8",
     "seaborn>=0.13",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
+
+[tool.ruff]
+line-length = 120   # the length the existing code is written to
+
+[tool.pytest.ini_options]
+pythonpath = ["."]   # tests import the pigeon package from the project root

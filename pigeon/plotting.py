@@ -15,7 +15,7 @@ FONT_RC = {
 # Task-block condition names for cohort 1 (OL). Blocks 4-6 are the same three
 # conditions repeated at high SNR (see data.py's blocks 4-6 -> 1-3 relabeling),
 # so CONDITION_LABELS[block % 3 or 3] applies to those too.
-CONDITION_LABELS = {1: 'no penalty', 2: 'reward cost', 3: 'step cost'}
+CONDITION_LABELS = {1: 'No penalty', 2: 'Coin penalty', 3: 'Step penalty'}
 
 # Row labels for figures with one row per task variant (OL = blocked SNR,
 # MX = mixed SNR), e.g. Figure05_mixedVsBlockedSNR, Figure05S01_boundDiffByDT.
@@ -42,3 +42,35 @@ def add_panel_label(ax, label, dx=-0.15, dy=1.08):
     ax.text(dx, dy, label, transform=ax.transAxes,
             fontsize=14, fontweight='bold', fontfamily='Helvetica',
             ha='left', va='top')
+
+
+def format_p(p):
+    """
+    Figure-text p value in the paper's compact style: 'p=0.012', or 'p<0.001' below 0.001.
+
+    Parameters
+    ----------
+    p : float
+
+    Returns
+    -------
+    str
+    """
+    return 'p<0.001' if p < 0.001 else f'p={p:.3f}'
+
+
+def format_rho(rho, digits=2):
+    """
+    Figure-text Spearman correlation, 'ρ=0.47' or 'ρ=−0.22', with a true minus sign (U+2212).
+
+    Parameters
+    ----------
+    rho : float
+    digits : int
+        Decimal places.
+
+    Returns
+    -------
+    str
+    """
+    return f'ρ={rho:.{digits}f}'.replace('-', '−')
