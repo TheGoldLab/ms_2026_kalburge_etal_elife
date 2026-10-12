@@ -30,7 +30,9 @@ position is shown for 200 ms (``UPDATE_INTERVAL`` in the task code).
    per group (``'per_group'``), flat (``'flat'``), or separate per value of
    another column (``time_course_col``, e.g. one shape per SNR while the
    other parameters stay per block). On change-point trials, positions
-   j >= change_point use ``bound_scale_post`` (if fit).
+   j >= change_point use ``bound_scale_post`` (if fit), and optionally
+   ``log theta`` changes by an extra ``slope_post`` per step from the change
+   point on (``post_params`` 'slope'; 0 at the change point itself).
 3. **Sensory noise.** The subject sees ``y_j = x_j + e_j`` with independent
    ``e_j ~ N(0, sensory_std^2)``, and commits at the first j >= 1 with
    ``|y_j| >= b_j``, choosing the side crossed. ``sensory_std = 0`` gives exact
@@ -102,12 +104,14 @@ import scipy.special
 import scipy.stats
 
 from .data import WALL, apply_bias_corrections, get_bounds, get_data_table, get_good_trial_array
+from .pathDefaults import BIAS_CORRECTION_CP_FILE, BIAS_CORRECTION_FILE
 
 NDT_VALUES = (1, 2)
 KNOTS = (1, 6, 16)
 ANCHOR = 6   # knot where h = 1, so bound_scale is the mean bound there
 GROUP_PARAMS = ("bound_scale", "bound_cv", "guess_rate", "lapse_rate", "anticipation_rate")
 POST_PARAMS = ("bound_scale", "guess_rate")
+POST_SLOPE = "slope"   # post_params entry for the extra post-change-point slope of log theta (``slope_post``)
 SHARED_PARAMS = ()   # default: every per-group parameter is separate per group
 TIME_COURSES = ("flat", "shared", "per_group")
 TIME_COURSE_FORMS = ("knots", "knee")
@@ -527,6 +531,9 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
     scale = np.where(post_mask, np.asarray(p["bound_scale_post"])[group_idx][:, None],
                      np.asarray(p["bound_scale"])[group_idx][:, None])
     theta = scale * np.exp(log_h[shape_idx])                                  # (n, L)
+    if "slope_post" in p and np.any(np.asarray(p["slope_post"]) != 0):
+        steps_since_cp = np.maximum(np.cumsum(post_mask, axis=1) - 1, 0)       # j - change_point on post positions
+        theta = theta * np.exp(np.asarray(p["slope_post"])[group_idx][:, None] * steps_since_cp)
     kappa = (1.0 / np.asarray(p["bound_cv"], float) ** 2)[group_idx]           # gamma shape, mean 1
 
     gr = np.where(post_mask, np.asarray(p["guess_rate_post"])[group_idx][:, None],
@@ -633,6 +640,7 @@ class _Layout:
         self.n_groups, self.n_ndt, self.time_course = n_groups, n_ndt, time_course
         self.knee = time_course_form == "knee" and time_course != "flat"
         self.post_params = tuple(q for q in POST_PARAMS if q in post_params)
+        self.post_slope = POST_SLOPE in post_params
         self.fixed = dict(fixed or {})
         if "ndt_probs" in self.fixed:
             # Fixed NDT probabilities are held as fixed logits relative to the first NDT value.
@@ -657,6 +665,8 @@ class _Layout:
                  ("anticipation_rate", size("anticipation_rate"), _LOGIT_LIMITS)]
         for name in self.post_params:
             spec.append((f"{name}_post", G, _LOGIT_LIMITS if name == "guess_rate" else _LOG_POS_LIMITS))
+        if self.post_slope:
+            spec.append(("slope_post", G, _LATE_SLOPE_LIMITS))
         spec.append(("sensory_std", 1, _LOG_SENSORY_LIMITS))
         spec.append(("ndt_logits", n_ndt - 1, _NDT_LOGIT_LIMITS))
         if self.knee:
@@ -685,6 +695,8 @@ class _Layout:
                 p[name] = np.broadcast_to(np.exp(out[name]), (self.n_groups,))
         for name in POST_PARAMS:
             p.setdefault(f"{name}_post", p[name])
+        p["slope_post"] = (np.asarray(out["slope_post"], float) if "slope_post" in out
+                           else np.zeros(self.n_groups))
         p["sensory_std"] = (float(self.fixed["sensory_std"]) if "sensory_std" in self.fixed
                             else float(np.exp(out["sensory_std"][0])))
         logits = np.r_[0.0, self.fixed["ndt_logits"] if "ndt_logits" in self.fixed
@@ -727,7 +739,7 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
         ``change_point`` and ``group_col``).
     params : dict
         Natural-scale parameters: GROUP_PARAMS (scalar or one per group, in
-        sorted group order), optional ``<name>_post``, ``sensory_std``,
+        sorted group order), optional ``<name>_post`` and ``slope_post``, ``sensory_std``,
         ``ndt_probs`` (one per ndt value), optional ``log_h`` (values at the
         knots, 0 at the anchor; shape (len(knots),) or (n_groups, len(knots));
         default flat), optional ``log_g`` (guess-rate time course, same shape;
@@ -745,6 +757,7 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
     p = {name: np.broadcast_to(np.asarray(params[name], float), (G,)) for name in GROUP_PARAMS}
     for name in POST_PARAMS:
         p[f"{name}_post"] = np.broadcast_to(np.asarray(params.get(f"{name}_post", params[name]), float), (G,))
+    p["slope_post"] = np.broadcast_to(np.asarray(params.get("slope_post", 0.0), float), (G,))
     p["sensory_std"] = params["sensory_std"]
     p["log_h"] = np.atleast_2d(params.get("log_h", np.zeros(len(knots))))
     p["log_g"] = np.atleast_2d(params.get("log_g", np.zeros(len(knots))))
@@ -774,7 +787,11 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     group_col : str or None
         Column whose values get separate per-group parameters.
     post_params : sequence of str
-        Subset of POST_PARAMS with separate post-change-point values.
+        Subset of POST_PARAMS with separate post-change-point values, plus
+        optionally 'slope' (POST_SLOPE): a per-group ``slope_post``, the extra
+        change in log theta per step from the change point on, on top of the
+        time course (same limits and penalty as ``late_slope``; 0 = the
+        plateau-only post-change model).
     time_course : {'flat', 'shared', 'per_group'}
         Bound time course across steps (see module docstring). Default
         'shared': one shape per subject (OL/MX model comparison: per-group
@@ -855,9 +872,9 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     """
     if data_table["choice"].isna().any():
         raise ValueError("fit_stopping_model: rows with missing choice; select trials first.")
-    unknown = set(post_params) - set(POST_PARAMS)
+    unknown = set(post_params) - set(POST_PARAMS + (POST_SLOPE,))
     if unknown:
-        raise ValueError(f"post_params must be a subset of {POST_PARAMS}; got {sorted(unknown)}.")
+        raise ValueError(f"post_params must be a subset of {POST_PARAMS + (POST_SLOPE,)}; got {sorted(unknown)}.")
     if time_course not in TIME_COURSES or guess_time_course not in TIME_COURSES:
         raise ValueError(f"time_course and guess_time_course must be one of {TIME_COURSES}.")
     if time_course_form not in TIME_COURSE_FORMS:
@@ -889,6 +906,7 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
             "anticipation_rate": np.full(G, scipy.special.logit(max(np.mean(lens <= 2), 0.005))),
             "bound_scale_post": np.full(G, np.log(med)),
             "guess_rate_post": np.full(G, scipy.special.logit(0.02)),
+            "slope_post": np.zeros(G),
             "sensory_std": np.array([np.log(max(0.3 * step_sd, 2e-3))]),
             "ndt_logits": np.zeros(len(ndt_values) - 1),
             "log_h": np.zeros(lay.n_shapes * lay.n_free_h),
@@ -907,20 +925,21 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
             tc_pen = np.sum(p["log_h_start"] ** 2) + np.sum((10 * p["late_slope"]) ** 2)
         else:
             tc_pen = np.sum(np.diff(p["log_h"], axis=1) ** 2)
-        penalty = tc_pen + np.sum(np.diff(p["log_g"], axis=1) ** 2)
+        # The post-change slope gets the late slope's prior (SD 0.5 on the change over 10 steps).
+        penalty = tc_pen + np.sum(np.diff(p["log_g"], axis=1) ** 2) + np.sum((10 * p["slope_post"]) ** 2)
         return nll + smooth_penalty * penalty, nll
 
     res = scipy.optimize.minimize(lambda t: objective(t)[0], x0, method="L-BFGS-B", bounds=lay.limits(),
                                   options={"maxfun": max_evals, "maxiter": max_evals})
     p = lay.unpack(res.x)
 
-    cols = list(GROUP_PARAMS) + [f"{q}_post" for q in lay.post_params]
+    cols = list(GROUP_PARAMS) + [f"{q}_post" for q in lay.post_params] + (["slope_post"] if lay.post_slope else [])
     table = pd.DataFrame({c: p[c] for c in cols})
     table.insert(0, "group", group_values)
     table["n_trials"] = np.bincount(group_idx, minlength=G)
     has_post = np.bincount(group_idx, weights=post_mask.any(axis=1), minlength=G) > 0
-    for q in lay.post_params:
-        table.loc[~has_post, f"{q}_post"] = np.nan
+    for q in [f"{q}_post" for q in lay.post_params] + (["slope_post"] if lay.post_slope else []):
+        table.loc[~has_post, q] = np.nan
     table["sensory_std"] = p["sensory_std"]
     for v, pv in zip(ndt_values, p["ndt_probs"]):
         table[f"ndt_p{v}"] = pv
@@ -963,7 +982,7 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
                              log_h=None, knots=KNOTS, ndt_values=NDT_VALUES, ndt_probs=(1.0, 0.0),
                              change_point=0, generative_mean_post=None, bound_scale_post=None,
                              guess_rate_post=None, max_steps=200, wall=WALL, rng=None, log_g=None,
-                             knee_shape=None):
+                             knee_shape=None, slope_post=0.0):
     """
     Simulate trials from the stopping model (the generative model fit by fit_stopping_model).
 
@@ -999,6 +1018,8 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
         anchor knot; see fit_stopping_model); None = constant.
     knee_shape : (log_h_start, knee, late_slope) or None
         Knee-form bound time course (see fit_stopping_model); overrides log_h.
+    slope_post : float
+        Extra change in log theta per step from the change point on (0 = none).
 
     Returns
     -------
@@ -1030,6 +1051,8 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
         lh = np.zeros(len(knots)) if log_h is None else np.asarray(log_h, float)
         h = np.exp(np.interp(np.arange(max_steps + 1), knots, lh))[None, :]
     theta = np.where(lpost, post(bound_scale_post, bound_scale), bound_scale) * h
+    if slope_post:
+        theta = theta * np.exp(np.where(lpost, slope_post * (j - cp[:, None]), 0.0))
     mult = _gamma_ppf(rng.random(n), bound_cv)
     hit_bound = np.abs(perceived) >= theta * mult[:, None]
     gr = np.where(lpost, post(guess_rate_post, guess_rate), guess_rate)
@@ -1092,6 +1115,8 @@ def _params_from_fits(fit_rows, knots=KNOTS):
     for name in POST_PARAMS:
         if f"{name}_post" in f:
             params[f"{name}_post"] = np.where(np.isfinite(f[f"{name}_post"]), f[f"{name}_post"], f[name])
+    if "slope_post" in f:
+        params["slope_post"] = np.nan_to_num(f["slope_post"].to_numpy(float), nan=0.0)
     params["sensory_std"] = float(f["sensory_std"].iloc[0])
     ndt_cols = sorted((c for c in f.columns if c.startswith("ndt_p")), key=lambda c: int(c[5:]))
     params["ndt_probs"] = f[ndt_cols].iloc[0].to_numpy(float)
@@ -1156,6 +1181,7 @@ def _subject_likelihood_inputs(data_table, fits, group_col, knots):
         q = {name: np.broadcast_to(np.asarray(p[name], float), (G,)) for name in GROUP_PARAMS}
         for name in POST_PARAMS:
             q[f"{name}_post"] = np.broadcast_to(np.asarray(p.get(f"{name}_post", p[name]), float), (G,))
+        q["slope_post"] = np.broadcast_to(np.asarray(p.get("slope_post", 0.0), float), (G,))
         q["sensory_std"] = p["sensory_std"]
         q["log_h"] = np.atleast_2d(p.get("log_h", np.zeros(len(knots))))
         q["log_g"] = np.atleast_2d(p.get("log_g", np.zeros(len(knots))))
@@ -1312,6 +1338,8 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
             for name in POST_PARAMS:
                 if f"{name}_post" in f and np.isfinite(f[f"{name}_post"]):
                     post[f"{name}_post"] = f[f"{name}_post"]
+            if "slope_post" in f and np.isfinite(f["slope_post"]):
+                post["slope_post"] = f["slope_post"]
         sim = simulate_stopping_trials(
             len(cps), mean, std, f["bound_scale"], f["bound_cv"], f["guess_rate"], f["lapse_rate"],
             f["anticipation_rate"], f["sensory_std"],
@@ -1414,7 +1442,9 @@ def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclus
     l_nochoice = d["choice"].isna()
     l_tau = pd.Series(False, index=d.index)
     if tau_exclusion:
-        dc = get_data_table(task_type=task_type, combine_snr=False)
+        # MXSC runs at SNRs only the CP calibration covers (as in Figure06).
+        bias_file = BIAS_CORRECTION_CP_FILE if task_type == "MXSC" else BIAS_CORRECTION_FILE
+        dc = get_data_table(task_type=task_type, combine_snr=False, correct_bias=bias_file)
         good_tau = get_adaptation_tau_fits(dc[dc["block_index"].isin(blocks)], blocks=blocks,
                                            max_trial=40)["good_tau"]
         l_tau = ~get_tau_exclusion_mask(d, good_tau)

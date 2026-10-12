@@ -70,6 +70,18 @@ def test_fit_recovers_change_point_shift():
     assert abs(p.loc[3, "bound_scale"] - 0.2) < 0.025
 
 
+def test_fit_recovers_post_change_point_slope():
+    d = _sim(4000, 0.01, 10, change_point=4, generative_mean_post=0.01, bound_scale_post=0.25,
+             slope_post=-0.06).assign(block_index=3)
+    truth = {**TRUE, "ndt_probs": NDT_PROBS, "bound_scale_post": 0.25, "slope_post": -0.06}
+    nll_true = stopping_model_nll(d, truth, group_col="block_index")
+    assert stopping_model_nll(d, {**truth, "slope_post": 0.0}, group_col="block_index") > nll_true
+    p = fit_stopping_model(d, post_params=("bound_scale", "slope"), time_course="flat",
+                           smooth_penalty=0.0)["params"].iloc[0]
+    assert abs(p["slope_post"] + 0.06) < 0.02
+    assert abs(p["bound_scale_post"] - 0.25) < 0.04
+
+
 def test_wall_hit_trials_are_censored_not_misfit():
     # Large steps: many trials reach the wall; the fit should still recover the bound.
     d = simulate_stopping_trials(3000, 0.15, 0.3, 0.4, 0.35, guess_rate=0.02, ndt_probs=NDT_PROBS,
