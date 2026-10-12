@@ -3,7 +3,7 @@ Within-block adaptation time-constant (tau) fits.
 
 Shared by ``Figure04_RRvsBound`` (source of the tau insets in panels D-F) and
 any other notebook that needs to gate trials on a subject's own within-block
-adaptation time constant (e.g. ``Figure03S04_sequentialAnalysis``). Extracted
+adaptation time constant (e.g. ``archive/Figure03S04_sequentialAnalysis``). Extracted
 from ``Figure04_RRvsBound`` so both notebooks fit tau from the same pipeline,
 with the same eligibility criteria, on the same data.
 
