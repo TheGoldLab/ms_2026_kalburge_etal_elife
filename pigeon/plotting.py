@@ -17,6 +17,13 @@ FONT_RC = {
 # so CONDITION_LABELS[block % 3 or 3] applies to those too.
 CONDITION_LABELS = {1: 'No penalty', 2: 'Coin penalty', 3: 'Step penalty'}
 
+# Figure color roles: data (raw values, per-subject summaries and data medians) are black, with dense
+# per-subject lines or points in light gray; the fitted stopping model is blue; optimal / normative
+# benchmarks (ideal observer, reward-rate curves and their peaks, near-optimal contours) are red.
+DATA_COLOR = 'k'
+MODEL_COLOR = 'tab:blue'
+OPTIMAL_COLOR = 'tab:red'
+
 # Row labels for figures with one row per task variant (OL = blocked SNR,
 # MX = mixed SNR), e.g. Figure05_mixedVsBlockedSNR, Figure05S01_boundDiffByDT.
 TASK_ROW_LABELS = {'OL': 'Blocked SNR', 'MX': 'Mixed SNR'}
