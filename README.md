@@ -8,28 +8,74 @@ Kalburge I, Dallstream A, Josić K, Kilpatrick ZP, Ding L, Gold JI
 
 ## Setup
 
-Raw human task data is frozen, so instead of keeping an unpacked copy checked into the
-repo (and re-zipping/unzipping it on every use), it's shipped as a compressed archive,
-[data/pigeon_raw_human.tar.gz](data/pigeon_raw_human.tar.gz), and unpacked once into an
-external directory outside the repo. Processed intermediates remain checked into
-`data/processed/` directly (see [Data layout](#data-layout-data) below).
+1. **Install** (Python ≥ 3.13, with [uv](https://github.com/astral-sh/uv)): `uv sync`
+2. **Unpack the raw data**: `scripts/unpack_data.sh`. This extracts the frozen archive
+   `data/pigeon_raw_human.tar.gz` into `../Data/Raw/Human` (a `Data/Raw/Human` directory next
+   to this repo, not inside it), where `pigeon/pathDefaults.py` expects it. Safe to re-run.
+3. **Run the model fits** (below), then the figure notebooks.
 
-1. **Install dependencies** (Python ≥ 3.13):
-   ```
-   pip install -e .
-   ```
-   Or with [uv](https://github.com/astral-sh/uv): `uv sync`
+Tests: `uv run pytest`. Lint and format: `uv run ruff check`, `uv run ruff format` (package,
+scripts and tests).
 
-2. **Unpack the raw data**:
-   ```
-   scripts/unpack_data.sh
-   ```
-   This extracts `data/pigeon_raw_human.tar.gz` into `../Data/Raw/Human` (i.e. a
-   `Data/Raw/Human` directory alongside this repo's own root, not inside it) — the
-   location `pigeon/pathDefaults.py`'s `RAW_DATA_DIR` expects. Safe to re-run; it skips
-   the unpack if that directory already has the data. To point the project at a
-   different data location instead, edit
-   [pigeon/pathDefaults.py](pigeon/pathDefaults.py).
+---
+
+## Pipeline
+
+Figures 3–6 rest on a trial-level **stopping model** (`pigeon/stopping.py`): a bound that falls
+from a high start to a plateau and then declines slowly, varies from trial to trial, and is
+compared with the perceived (noisy) position, plus guesses, anticipations and lapses; the
+non-decision time (1 or 2 steps) is marginalized. Fits take hours, so they run as scripts and
+are cached in `data/processed/` (not tracked by git). Run scripts from the project root, e.g.
+`PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_fits.py > data/processed/stopping_fits.log 2>&1 &`.
+
+| Step | Script | Output (`data/processed/`) | Used by |
+|---|---|---|---|
+| 1 | `run_stopping_fits.py main` | `stopping_fits_main.pkl` | Figs 3, 3S1–3S6, 4, 5, 5S1 |
+| 2 | `run_stopping_fits.py <variants>` (alternatives; see the script) | `stopping_fits_<variant>.pkl` | Fig 3S1 |
+| 2 | `run_stopping_fits.py mx_by_snr` | `stopping_fits_mx_by_snr.pkl` | Fig 5 |
+| 3 | `run_stopping_bootstrap.py` (after 1) | `stopping_bootstrap.pkl` | Figs 3S1, 4 |
+| 3 | `run_stopping_late_slope.py` (after 1) | `stopping_late_slope.pkl` | Fig 5S1 |
+| 4 | `run_stopping_fits_cp.py cp_plateau_pair` | `stopping_fits_cp_plateau_pair.pkl` | step 5 |
+| 5 | `run_stopping_fits_cp_matched.py` (after 4) | `stopping_fits_cp_matched.pkl` | Fig 6 |
+| 5 | `run_cp_incentive_sims.py` (after 4) | `cp_incentive_step.pkl`, `cp_incentive_slope.pkl` | Fig 6 |
+
+`notebooks/Make_biasCorrection.ipynb` builds the bound bias-correction calibrations
+(`boundBiasCorrection.mat`, `boundBiasCorrection_CP.mat`, tracked in git, about 30 min). They
+correct the direct (per-trial) bound measure, which sets the adaptation time constants and thus the
+adaptation transient that every stopping-model fit leaves out; rerun it only if the bound
+estimator changes.
+
+Run a notebook from `notebooks/`, e.g.
+`OMP_NUM_THREADS=1 uv run jupyter nbconvert --to notebook --execute --inplace Figure03_boundSummary.ipynb`.
+Figures are saved (PDF and PNG) to `../Figures`.
+
+---
+
+## Notebooks
+
+| Notebook | Contents |
+|---|---|
+| `Figure02_performanceSummary` | Example trajectories, NDT congruence, accuracy vs. median DT with the ideal observer (cohort 1) |
+| `Figure02S01_RRSummary` | Reward rate as % of the best fixed bound's, all blocks of both cohorts |
+| `Figure03_boundSummary` | The direct bound measure vs. the stopping model's bound; bound shape; sources of commitments |
+| `Figure03S01_modelComparison` | Model comparison (ΔAIC vs. alternative stopping models) and parameter recovery (bootstrap) |
+| `Figure03S02_modelFitQuality` | RT distributions, accuracy vs. RT and trial-by-trial choice prediction, data vs. model |
+| `Figure03S03_suboptimalBehavior` | Incongruent choices and premature crossings, data vs. model, and their sources in the model |
+| `Figure03S04_sequentialStructure` | Trial-to-trial variability of the measured bound and post-error change, data vs. model |
+| `Figure03S05_stepsBeforeDecision` | Last and penultimate steps before the decision, data vs. model |
+| `Figure03S06_conditionalAccuracy` | Conditional accuracy functions, data vs. model |
+| `Figure04_RRvsBound` | Bound plateau vs. reward rate with the fixed-bound optimum; within-block adaptation |
+| `Figure04S01_RRvsBoundPD` | The same for the predefined-bound task |
+| `Figure05_mixedVsBlockedSNR` | Low- vs. high-SNR bound plateaus, blocked vs. mixed SNR, on reward-rate surfaces |
+| `Figure05S01_collapseByCondition` | The bound's time course and late collapse in every condition |
+| `Figure05S02_RRMapExploration` | Reward rate of collapsing vs. flat vs. rising bounds in mixed-SNR blocks |
+| `Figure06_cpSummary` | Change-point task: anticipation and step of the bound vs. matched fixed blocks, with reward-rate incentives |
+| `Make_biasCorrection` | Bound bias-correction calibrations (see Pipeline) |
+| `Test_NDT` | How `get_bounds` estimates the NDT |
+| `Test_boundDefinition` | How `get_bounds` defines the bound at the commit step (peak-step rule) |
+| `Test_cpRDesign` | Ideal-observer bounds for the reward-change (RC) task design |
+
+`notebooks/archive/` holds notebooks that no longer produce a figure (see its README).
 
 ---
 
@@ -37,103 +83,29 @@ external directory outside the repo. Processed intermediates remain checked into
 
 | Directory | Contents |
 |---|---|
-| `pigeon/` | The Python analysis package (see [Package structure](#package-structure-pigeon) below) |
-| `notebooks/` | Figure, preprocessing, table, and test notebooks (see [Notebook index](#notebook-index) below) |
-| `data/` | Compressed raw-data archive and processed intermediates (see [Data layout](#data-layout-data) below) |
-| `scripts/` | Setup scripts (`unpack_data.sh`) |
-| `matlab/` | The original MATLAB analysis pipeline this Python package is translated from — `Figure*.m` (per-figure scripts) and `getPigeon_*.m`/`makePigeon_*.m` (the underlying data-loading, bound-inference, and summary functions Python's `pigeon/data.py` ports), plus a few reference `.mat` outputs from that pipeline (`boundSummaries_wCP.mat`, `boundBiasCorrectionMXSC.mat`) kept for cross-checking against the Python port |
-| `pilot/` | Early pilot task code and analysis, predating the current Prolific data collection (`Task_PigeonPilot/`, `Analysis_PigeonPilot/`) |
-| `task/` | The deployed jsPsych/Pavlovia task code participants actually ran (`PigeonTask.js`, `index.html`, `Resources/`) — see `task/MXSC/README.md` for local-run and Prolific-deployment instructions |
+| `pigeon/` | The analysis package (below) |
+| `notebooks/` | Figure, preprocessing and test notebooks |
+| `scripts/` | Model-fitting and simulation scripts (Pipeline) and `unpack_data.sh` |
+| `tests/` | Tests of the package (`uv run pytest`) |
+| `data/` | The raw-data archive, and processed outputs in `data/processed/` |
+| `task/` | Task code participants ran: `OL-MX-PD/` (cohorts 1 and 2, predefined bound), `MXSC/` (change point), `RC/` (reward change, not yet collected); see each folder's README |
+| `matlab/` | The original MATLAB analysis pipeline, kept for reference; the Python package supersedes it |
+| `pilot/` | Pilot task and analysis code that predate the data collection, kept for reference |
 
-3. **Run preprocessing notebooks** (must run before Figure notebooks):
-   - `notebooks/Make_biasCorrection.ipynb` — generates `data/processed/boundBiasCorrection.mat`
-     (MX/OL/PD tasks, Part 1) and `data/processed/boundBiasCorrection_CP.mat`
-     (change-point task, at its own smaller generative scale, Part 2)
-   - `notebooks/Make_RRMatrix.ipynb` — generates `data/processed/RRMats.mat` (expected
-     reward-rate matrices for the change-point task; the full matrices at the validated
-     `NUM_REPS = 5000` take ~6.5 hr)
-
-4. **Run Figure notebooks** to reproduce paper figures.
+Raw data (unpacked into `../Data/Raw/Human/`): one folder of per-subject CSVs per task: `OL`
+(cohort 1, blocked SNR), `MX` (cohort 2, mixed SNR), `PD` (predefined bound), `MXSC` (change
+point). `get_data_table(task_type=...)` reads the folder of that name.
 
 ---
 
-## Data layout (`data/`)
+## Package (`pigeon/`)
 
-| Path | Contents |
+| Module | Contents |
 |---|---|
-| `data/pigeon_raw_human.tar.gz` | Compressed archive of all raw per-subject task CSVs. Unpack with `scripts/unpack_data.sh` (see [Setup](#setup) above) |
-| `data/processed/` | Bias-correction calibrations and reward-rate matrices generated by the preprocessing notebooks above |
-
-Once unpacked (into `../Data/Raw/Human`, outside the repo — see Setup), the archive expands
-into one flat folder of CSVs per task type, no nested subfolders:
-
-| Path (under `Data/Raw/Human/`) | Contents |
-|---|---|
-| `MX/` | Mixed-SNR task — raw per-subject CSVs |
-| `OL/` | Blocked-SNR ("online") task — raw per-subject CSVs |
-| `PD/` | Predefined-bound task — raw per-subject CSVs |
-| `MXSC/` | Change-point task (mixed-SNR with self-change blocks) — raw per-subject CSVs |
-
-`get_data_table(task_type=...)` picks the matching folder by name (`'MX'`, `'OL'`, `'PD'`, or `'MXSC'`).
-
----
-
-## Notebook index
-
-### Preprocessing
-| Notebook | Output | Description |
-|---|---|---|
-| `Make_biasCorrection` | `boundBiasCorrection.mat`, `boundBiasCorrection_CP.mat` | Bias-correction calibration for the bound estimator (Part 1: MX/OL/PD; Part 2: change-point task) |
-| `Make_RRMatrix` | `RRMats.mat` | Expected reward-rate matrices over bound grids (MX and change-point) |
-
-### Main figures
-| Notebook | Figure | Description |
-|---|---|---|
-| `Figure02_performanceSummary` | Figure 02 | OL task performance: example trajectories, congruence, accuracy vs. DT |
-| `Figure02S01_RRSummary` | Figure 02S1 | Reward-rate summary |
-| `Figure03_boundSummary` | Figure 03 | Bound vs. DT: individual trials, z-scored curves, regression slopes |
-| `Figure03S01_congruenceByRT` | Figure 03S1 | Congruence by response time |
-| `Figure03S02_stepSizeBeforeBound` | Figure 03S2 | Step size before the bound-crossing step: does it predict termination beyond a fixed bound? |
-| `Figure03S03_boundTest` | Figure 03S3 | Bound definition validation via fixed-bound simulations (NDT variability, sensory noise) |
-| `Figure03S04_sequentialAnalysis` | Figure 03S4 | Sequential structure in bound estimates: regression-to-mean artifact demo, real-vs-simulated slope/variability comparison, residual sequential structure (OL blocks 1–3) |
-| `Figure03S05_sequentialAnalysisPD` | Figure 03S5 | Sequential structure in PD bound choices: regression-to-mean demo, real-vs-shuffle-null slope/autocorrelation, SD histograms (PD blocks 1–3) — PD-task analog of Figure 03S4 |
-| `Figure03S06_conditionalAccuracy` | Figure 03S6 | Conditional accuracy functions (MX task): drift-varies vs. bound-varies model predictions |
-| `Figure04_RRvsBound` | Figure 04 | Reward rate vs. bound (OL) and within-block learning curves |
-| `Figure04S01_RRvsBoundPD` | Figure 04S1 | Reward rate vs. bound (PD) and within-block learning curves — PD-task analog of Figure 04 |
-| `Figure05_mixedVsBlockedSNR` | Figure 05 | Bound comparison: mixed vs. blocked SNR |
-| `Figure05S01_boundDiffByDT` | Figure 05S1 | Hi−Lo SNR bound difference by DT |
-| `Figure05S02_RRMapExploration` | Figure 05S2 | Reward-rate map exploration |
-| `Figure06_cpSummary` | Figure 06 | Change-point task: bound adaptation relative to optimal |
-| `Figure07_biasCorrection` | Figure 07 | Bias correction example (DT=2, lowest SNR) |
-| `Table_slopeAnalyses` | Table | Linear-regression slope statistics |
-
-### Tests and diagnostics
-| Notebook | Description |
-|---|---|
-| `Test_NDT` | NDT consistency across SNR conditions and blocks |
-| `Test_boundDefinition` | Validation of the bound-inference algorithm |
-| `Test_cpData` | Change-point exploratory analyses: RR-gradient/CP-timing predictors of bound adjustment (correlation, partial correlation, regression) |
-| `Test_trialQuality` | Trial quality filter validation |
-
----
-
-## Package structure (`pigeon/`)
-
-| Module | Description |
-|---|---|
-| `data.py` | Load CSV data, infer bounds/DT/RT, apply bias correction, and summarize (per-subject/block/SNR performance and bound statistics, plus the change-point-specific composed summary) |
-| `simulation.py` | Generative model: random-walk accumulator with absorbing bound |
-| `adaptation.py` | Within-block adaptation (tau) fits |
-| `plotting.py` | Shared style helpers for figure/table notebooks (`FONT_RC`, `add_panel_label`, condition/task label dicts) |
-| `pathDefaults.py` | All project-wide file and directory paths |
-
-Key functions (all in `data.py`, re-exported from the top-level `pigeon` package):
-- `get_data_table(task_type)` — load all trials for `'OL'`, `'MX'`, `'PD'`, or `'MXSC'` (change-point)
-- `get_bounds(steps_list, choices)` — infer bound, DT, RT from step sequences
-- `get_good_trial_array(data_table)` — standard quality filter (DT≥2, trial≥10, no wall hits)
-- `get_bound_summary(data_table)` — mean |bound| per subject/block/SNR/DT bin
-- `get_performance_summary(data_table)` — accuracy and DT statistics
-- `get_bound_summaries_wcp(data_table_mxsc)` — change-point-specific composed bound summary (pre-/post-change bounds, stable-SNR bounds, per-subject change-point step), used by `Figure06_cpSummary`, `Make_RRMatrix`, and `Test_cpData`
-- `simulate_trials(...)` — core simulation engine
-- `get_simulated_data_table(...)` — full simulated data table matching `get_data_table` format
-- `get_adaptation_tau_fits(...)` (in `adaptation.py`) — per-subject/block adaptation time-constant fits
+| `data.py` | `get_data_table` (load trials), `get_bounds` (direct bound measure, NDT, DT, RT cutoffs), `get_good_trial_array` (standard trial filter), `apply_bias_corrections`, summaries |
+| `stopping.py` | The stopping model: likelihood, `fit_stopping_model(s)`, simulation, `get_stopping_model_trials` (the trial selection for all fits) and helpers for the Figure 3 comparisons |
+| `adaptation.py` | Within-block adaptation time constants (τ) and trial-to-trial structure of the bound |
+| `simulation.py` | Fixed-bound simulations of whole blocks (reward-rate benchmarks) and of single trials (bias calibration) |
+| `ideal_observer.py` | Reward-rate-optimal bounds by dynamic programming (RC task design) |
+| `plotting.py` | Shared figure style: fonts and sizes, color roles, panel letters, p and ρ formatting |
+| `pathDefaults.py` | All file and directory paths |

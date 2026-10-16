@@ -13,7 +13,8 @@ Writes data/processed/stopping_late_slope.pkl, one row per subject x
 condition, for notebooks/Figure05S01_collapseByCondition.ipynb. Run from the
 project root:
 
-    PYTHONPATH=. nohup uv run python scripts/run_stopping_late_slope.py > data/processed/stopping_late_slope.log 2>&1 &
+    PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_late_slope.py \
+        > data/processed/stopping_late_slope.log 2>&1 &
 """
 
 import time

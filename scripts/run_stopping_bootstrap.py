@@ -5,17 +5,16 @@ Simulates every subject NUM_REPS times from their own main-variant fit
 blocks, trial counts, SNRs and step statistics), refits each simulated data
 set with the same defaults, and saves true vs. fitted parameters. The spread
 of a subject's refits gives a confidence interval on their parameters
-(e.g. the bound plateau). This checks
-whether sensory noise, bound variability (CV) and guessing can be told apart
-for these subjects at their own parameter values, rather than over generic
-recovery ranges.
+(e.g. the bound plateau), and the agreement between simulated and refit
+values shows which parameters can be told apart (e.g. sensory noise, bound
+variability and guessing) at these subjects' own parameter values.
 
 Writes data/processed/stopping_bootstrap.pkl (one row per subject x block x
-replicate, column ``rep``). The knots-form single-replicate run of 2026-10-10
-is archived in data/processed/stopping_fits_round3_knots/. Run from the
-project root (after run_stopping_fits.py main):
+replicate, column ``rep``), used by Figure03S01 (parameter recovery) and
+Figure04 (error bars). Run from the project root (after run_stopping_fits.py main):
 
-    PYTHONPATH=. nohup uv run python scripts/run_stopping_bootstrap.py > data/processed/stopping_bootstrap.log 2>&1 &
+    PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_bootstrap.py \
+        > data/processed/stopping_bootstrap.log 2>&1 &
 """
 
 import time

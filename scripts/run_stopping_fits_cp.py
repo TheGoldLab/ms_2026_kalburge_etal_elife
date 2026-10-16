@@ -17,23 +17,16 @@ Run from the project root, detached:
     PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_fits_cp.py [variant ...] \
         > data/processed/stopping_fits_cp.log 2>&1 &
 
-Variants (default: the first three, nested):
-    cp_none           no post-change-point parameters (the bound ignores the change point)
-    cp_plateau        separate post-change-point plateau (bound_scale_post) in blocks 3, 4
-    cp_plateau_slope  as cp_plateau plus an extra post-change-point slope of log theta (slope_post)
-    cp_pre            anticipatory pre-change-point slope of log theta (slope_pre), anchored at the change point
-    cp_plateau_pre    cp_plateau plus slope_pre: the step at the change point with anticipation fit jointly
-    cp_plateau_pair, cp_plateau_pre_pair
-                      as cp_plateau / cp_plateau_pre but one time-course shape per block pair
-                      (column 'pair': blocks 1 + 3 start at low SNR, 2 + 4 at high SNR), so each
-                      change-point block's step and slope are measured against its matched fixed
-                      block's shape rather than one shared by all four blocks
+Variants (default: cp_plateau_pair):
+    cp_plateau_pair   post-change-point plateau (bound_scale_post) in blocks 3 and 4, and one
+                      time-course shape per block pair (column 'pair': blocks 1 + 3 start at low
+                      SNR, 2 + 4 at high SNR), so each change-point block is measured against its
+                      matched fixed block's shape. Stage 1 of Figure 6
+                      (scripts/run_stopping_fits_cp_matched.py is stage 2); about 3 h.
+    cp_none           no post-change-point parameters and one shape for all four blocks (the
+                      bound ignores the change point); a baseline for model comparison.
 
-Fits run from several starting knees (pigeon.stopping.KNEE_STARTS) and keep the
-best, except cp_plateau_pre: its single-start fit already took ~7.6 h, so it
-starts each subject once, at the knee of that subject's cp_plateau fit (run
-cp_plateau first). The knee is set mainly by the fixed blocks, which slope_pre
-doesn't touch.
+Fits run from several starting knees (pigeon.stopping.KNEE_STARTS) and keep the best.
 """
 
 import sys
@@ -41,22 +34,15 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from pigeon.stopping import fit_stopping_models, get_stopping_model_trials
 
 OUT_DIR = Path("data/processed")
 BLOCKS = [1, 2, 3, 4]
 VARIANTS = {
-    "cp_none": {},
-    "cp_plateau": {"post_params": ("bound_scale",)},
-    "cp_plateau_slope": {"post_params": ("bound_scale", "slope")},
-    "cp_pre": {"post_params": ("pre_slope",)},
-    "cp_plateau_pre": {"post_params": ("bound_scale", "pre_slope"), "knee_from": "cp_plateau"},
     "cp_plateau_pair": {"post_params": ("bound_scale",), "time_course_col": "pair"},
-    "cp_plateau_pre_pair": {"post_params": ("bound_scale", "pre_slope"), "time_course_col": "pair"},
+    "cp_none": {},
 }
-DEFAULT_VARIANTS = ["cp_none", "cp_plateau", "cp_plateau_slope"]
 
 
 def log(msg):
@@ -74,13 +60,7 @@ def main(variants):
     d["pair"] = np.where(d["block_index"].isin([1, 3]), "low", "high")
     for variant in variants:
         t0 = time.time()
-        kwargs = dict(VARIANTS[variant])
-        subject_kwargs = None
-        if "knee_from" in kwargs:
-            knees = pd.read_pickle(OUT_DIR / f"stopping_fits_{kwargs.pop('knee_from')}.pkl").groupby("subject_index").knee.first()
-            subject_kwargs = {s: {"knee_starts": (float(k),)} for s, k in knees.items()}
-        f = fit_stopping_models(d, group_col="condition", subject_kwargs=subject_kwargs, **kwargs).assign(
-            task="MXSC", variant=variant)
+        f = fit_stopping_models(d, group_col="condition", **VARIANTS[variant]).assign(task="MXSC", variant=variant)
         n_bad = int((~f.groupby("subject_index").success.first()).sum())
         log(f"{variant}: {f.subject_index.nunique()} subjects in {(time.time() - t0) / 60:.1f} min; "
             f"{n_bad} did not converge")
@@ -90,4 +70,4 @@ def main(variants):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:] or DEFAULT_VARIANTS)
+    main(sys.argv[1:] or ["cp_plateau_pair"])

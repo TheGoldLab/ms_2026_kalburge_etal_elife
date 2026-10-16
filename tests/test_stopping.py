@@ -5,9 +5,9 @@ import pandas as pd
 import pytest
 
 from pigeon.stopping import (KNEE_PARAMS, KNOTS, _knee_log_h, bound_time_course, fit_stopping_model,
-                             get_choice_probabilities, get_commit_hazard_table, get_commit_sources,
+                             get_choice_probabilities, get_commit_sources,
                              get_commit_type_probabilities,
-                             get_effective_bounds, get_plateau_at_limit, simulate_stopping_data_table,
+                             get_plateau_at_limit, simulate_stopping_data_table,
                              simulate_stopping_trials, stopping_model_nll)
 
 TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
@@ -152,16 +152,6 @@ def test_shared_and_per_block_parameters():
     assert r["n_params"] == 2 * 2 + 3 + 1 + 1   # scale, cv per block; 3 rates; noise; NDT
 
 
-def test_effective_bounds_match_time_course():
-    fit = {"subject_index": 1, "group": "B1", "bound_scale": 0.2, "ndt_p1": 0.7, "ndt_p2": 0.3,
-           **{f"log_h_k{k}": v for k, v in zip(KNOTS, COLLAPSE)}}
-    d = pd.DataFrame({"subject_index": 1, "condition": "B1", "RT": [2, 5, 9, 30]})
-    got = get_effective_bounds(d, pd.DataFrame([fit]))
-    want = [0.7 * bound_time_course(fit, [max(rt - 2, 1)])[0] + 0.3 * bound_time_course(fit, [max(rt - 3, 1)])[0]
-            for rt in d.RT]
-    assert np.allclose(got, want)
-
-
 def test_fit_recovers_guess_time_course_with_flat_bound():
     early = np.array([1.5, 0.0, -0.5])   # logit-scale guess shift at KNOTS: more guessing early
     d = _sim(4000, 0.02, 12, log_g=early, guess_rate=0.04)
@@ -243,17 +233,6 @@ def test_commit_type_probabilities_are_calibrated():
 def test_plateau_at_limit_flags_both_limits():
     f = pd.DataFrame({"bound_scale": [0.002, 0.00203, 0.05, 1.5, 1.97, 2.0, np.nan]})
     assert get_plateau_at_limit(f).tolist() == [True, True, False, False, True, True, False]
-
-
-def test_commit_hazard_table_risk_set():
-    d = pd.DataFrame({"steps": [[0, 0.1, 0.2, 0.3, 0.4], [0, 0.1, 0.8, 0.75, 0.75, 0.75], [0], [0, 0.1]],
-                      "RT": [5, 6, 1, 2], "subject_index": 1, "condition": "B1"})
-    h = get_commit_hazard_table(d, ndt=1)
-    # Trial 0: commit at k = 3, at risk at steps 1-3. Trial 1: wall at step 2, so only step 1 (no commit).
-    # Trial 2 (RT = 1) and trial 3 (k = 0) contribute nothing.
-    assert h.trial.tolist() == [0, 0, 0, 1]
-    assert h.commit.tolist() == [False, False, True, False]
-    assert np.allclose(h.abs_x, [0.1, 0.2, 0.3, 0.1]) and (h.condition == "B1").all()
 
 
 def test_choice_probabilities_are_calibrated():

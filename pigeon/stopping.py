@@ -4,8 +4,8 @@ plus guesses, anticipations, and choice lapses.
 
 Fits *when* a subject commits and *which* side they choose from the pigeon's
 full on-screen path on every trial, instead of inferring one bound per trial
-and filtering out the trials that don't fit (DT cutoffs). Used by
-notebooks/Test_stoppingModel.ipynb.
+and filtering out the trials that don't fit (DT cutoffs). The model of
+Figures 3-6; fits are made by the scripts in scripts/ (see the README).
 
 Generative model (per trial)
 ----------------------------
@@ -94,9 +94,8 @@ local minimum; the best is kept. By default ``bound_scale``,
 ``bound_cv``, ``guess_rate``, ``lapse_rate``, ``anticipation_rate`` (and any
 ``post_params``) are per group, and the bound's time-course shape,
 ``sensory_std`` and the NDT probabilities are shared by the subject's groups
-(the split chosen by model comparison on OL/MX; see
-notebooks/Test_stoppingModel.ipynb); ``shared_params`` and ``time_course``
-change that. A penalty on adjacent differences of ``log h``
+(the split chosen by model comparison, Figure03S01); ``shared_params`` and
+``time_course`` change that. A penalty on adjacent differences of ``log h``
 (``smooth_penalty``; Gaussian prior SD ``1/sqrt(2 * smooth_penalty)`` on each
 log change, 0.5 by default) keeps the time course near flat unless the data
 say otherwise: with ~50-150 trials per block, an unpenalized per-block curve
@@ -114,7 +113,7 @@ import scipy.optimize
 import scipy.special
 import scipy.stats
 
-from .data import WALL, apply_bias_corrections, get_bounds, get_data_table, get_good_trial_array
+from .data import WALL, get_bounds, get_data_table, get_good_trial_array
 from .pathDefaults import BIAS_CORRECTION_CP_FILE, BIAS_CORRECTION_FILE
 
 NDT_VALUES = (1, 2)
@@ -227,59 +226,6 @@ def _shift_logit(rate, shift):
         return scipy.special.expit(scipy.special.logit(rate) + shift)
 
 
-def get_commit_hazard_table(data_table, ndt=1, wall=WALL):
-    """
-    Step-by-step risk set for a model-free commit hazard.
-
-    For each trial, the commit step is taken as ``k = RT - ndt - 1`` (the
-    ``DT`` convention of ``get_bounds`` with a fixed NDT). Every step
-    ``j = 1..k`` at which the subject had not yet committed contributes one
-    row: the pigeon's distance from center ``|x_j|`` and whether the commit
-    happened at that step. Steps at or after the pigeon first reached the
-    wall are left out (a position held at the wall carries no new
-    information), as are RT = 1 trials (key pressed on the first frame) and
-    trials with ``k < 1``. Averaging ``commit`` within (step, |x|) bins gives
-    P(commit at step j | |x_j|, not committed before j). Apply the same
-    function to real and simulated trials so both share the convention.
-
-    Parameters
-    ----------
-    data_table : pd.DataFrame
-        Trials with ``steps``, ``RT``, and any grouping columns to carry
-        (``subject_index``, ``condition`` if present).
-    ndt : int
-        NDT (steps) used to place the commit.
-    wall : float
-        Screen-edge position.
-
-    Returns
-    -------
-    pd.DataFrame with ``trial`` (index label in data_table), ``step``,
-    ``abs_x``, ``commit`` (bool), plus ``subject_index`` and ``condition``
-    when present in data_table.
-    """
-    keep = [c for c in ("subject_index", "condition") if c in data_table]
-    parts = []
-    for idx, steps, rt in zip(data_table.index, data_table["steps"], data_table["RT"]):
-        rt = int(rt)
-        k = rt - ndt - 1
-        if rt == 1 or k < 1:
-            continue
-        x = np.abs(np.asarray(steps, float))
-        at_wall = np.nonzero(x >= wall - 1e-9)[0]
-        last = min(k, at_wall[0] - 1 if len(at_wall) else k)
-        if last < 1:
-            continue
-        j = np.arange(1, last + 1)
-        parts.append(pd.DataFrame({"trial": idx, "step": j, "abs_x": x[j], "commit": j == k}))
-    if not parts:
-        return pd.DataFrame(columns=["trial", "step", "abs_x", "commit"] + keep)
-    out = pd.concat(parts, ignore_index=True)
-    for c in keep:
-        out[c] = data_table.loc[out["trial"], c].to_numpy()
-    return out
-
-
 COMMIT_SOURCES = ("guess", "lapse", "timing", "sensory noise", "measurement", "collapsing bound")
 
 
@@ -380,89 +326,6 @@ def bound_time_course(fit_row, steps, knots=KNOTS, post=False):
     """
     scale = fit_row["bound_scale_post" if post else "bound_scale"]
     return scale * np.exp(get_log_h(pd.Series(fit_row), steps, knots)[0])
-
-
-def get_effective_bounds(data_table, fits, group_col="condition", knots=KNOTS, ndt_values=NDT_VALUES):
-    """
-    Fitted mean bound at each trial's commit step, averaged over the fitted NDT.
-
-    For a trial with response time RT the commit step is ``RT - ndt - 1``
-    (clipped to >= 1); the result is ``sum_ndt P(ndt) * theta(RT - ndt - 1)``.
-    Averaged over a subject's trials this is the model's counterpart of a
-    mean measured bound: it weights the time course by when that subject
-    actually responded.
-
-    Parameters
-    ----------
-    data_table : pd.DataFrame
-        Trials with ``subject_index``, ``group_col`` and ``RT``.
-    fits : pd.DataFrame
-        Output of fit_stopping_models (``group`` matches ``group_col``).
-    group_col : str
-    knots, ndt_values : sequences
-        Must match the fits.
-
-    Returns
-    -------
-    pd.Series (index of data_table); NaN for trials without a fit.
-    """
-    tc_cols = [c for c in fits.columns if c.startswith("log_h_k") or c in KNEE_PARAMS]
-    cols = ["bound_scale"] + tc_cols + [f"ndt_p{n}" for n in ndt_values]
-    f = data_table[["subject_index", group_col, "RT"]].merge(
-        fits[["subject_index", "group"] + cols], left_on=["subject_index", group_col],
-        right_on=["subject_index", "group"], how="left")
-    max_step = int(np.nanmax(f["RT"])) + 1
-    log_h = get_log_h(f, np.arange(max_step), knots)          # (n_trials, max_step)
-    rows = np.arange(len(f))
-    out = np.zeros(len(f))
-    for ndt in ndt_values:
-        j = np.clip(f["RT"].to_numpy(int) - ndt - 1, 1, None)
-        out += f[f"ndt_p{ndt}"].to_numpy() * f["bound_scale"].to_numpy() * np.exp(log_h[rows, j])
-    return pd.Series(out, index=data_table.index)
-
-
-def get_fit_vs_median_bounds(data_table, fits, bias_file, group_col="condition", knots=KNOTS,
-                             ndt_values=NDT_VALUES):
-    """
-    Per subject x group: fitted bounds next to the paper's median |bound|.
-
-    The median |bound| uses the paper's standard trial set
-    (``get_good_trial_array``: DT >= 2, trial_number >= 10, no wall hit, RT
-    cutoff; plus a finite, nonzero bound), on raw positions and after
-    ``apply_bias_corrections``. The fitted bound is the mean of
-    ``get_effective_bounds`` over the same trials, plus ``bound_scale`` (the
-    bound plateau: the mean bound at the knee, or at the anchor step for the
-    knots form).
-
-    Parameters
-    ----------
-    data_table : pd.DataFrame
-        get_data_table(..., correct_bias=None) output (or infer_bounds_like_data
-        output for simulated trials), with ``group_col``.
-    fits : pd.DataFrame
-        Output of fit_stopping_models.
-    bias_file : str or Path
-        Calibration file for apply_bias_corrections.
-    group_col, knots, ndt_values
-        As in get_effective_bounds.
-
-    Returns
-    -------
-    pd.DataFrame with ``subject_index``, ``group``, ``n_trials``, ``median_raw``,
-    ``median_corrected``, ``bound_scale``, ``effective_bound``.
-    """
-    lg = get_good_trial_array(data_table) & np.isfinite(data_table["bound"]) & (data_table["bound"] != 0)
-    d = data_table[lg].copy()
-    d["abs_bound_corrected"] = apply_bias_corrections(d, str(bias_file))["abs_bound"]
-    d["effective_bound"] = get_effective_bounds(d, fits, group_col, knots, ndt_values)
-    d["abs_bound"] = d["bound"].abs()
-    g = d.groupby(["subject_index", group_col])
-    out = pd.DataFrame({"n_trials": g.size(),
-                        "median_raw": g.abs_bound.median(),
-                        "median_corrected": g.abs_bound_corrected.median(),
-                        "effective_bound": g.effective_bound.mean()}).reset_index()
-    out = out.rename(columns={group_col: "group"})
-    return out.merge(fits[["subject_index", "group", "bound_scale"]], on=["subject_index", "group"], how="left")
 
 
 def _pad_steps(steps_list):
@@ -852,14 +715,13 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         change point or at step 1, see ``pre_slope_anchor``).
     time_course : {'flat', 'shared', 'per_group'}
         Bound time course across steps (see module docstring). Default
-        'shared': one shape per subject (OL/MX model comparison: per-group
-        shapes fit worse by AIC and are poorly recoverable at 33-150 trials
-        per block).
+        'shared': one shape per subject (Figure03S01: per-block shapes fit
+        worse by AIC).
     shared_params : sequence of str
         Subset of GROUP_PARAMS with one value shared by all groups. Default
         none: bound scale and CV, guess, lapse and anticipation rates are all
-        per group (OL/MX: sharing the three rates is strongly rejected,
-        dAIC +12,000 OL, +1,000 MX). Sensory noise and NDT are always shared.
+        per group (Figure03S01: sharing the three rates fits much worse).
+        Sensory noise and NDT are always shared.
     knots : sequence of int
         Steps at which log h is free (the first is fixed at 0).
     ndt_values : sequence of int
@@ -897,7 +759,7 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         'flat' (constant guess rate).
     time_course_form : {'knee', 'knots'}
         Form of the bound time course (default 'knee', chosen by model
-        comparison on OL/MX: dAIC -1,259 OL, -507 MX vs. knots at 1/6/16). 'knots': ``log h`` piecewise linear
+        comparison, Figure03S01). 'knots': ``log h`` piecewise linear
         through ``knots``, 0 at ``anchor``. 'knee': linear from
         ``log_h_start`` at step 1 to 0 at a free knee step (``knee``, 1.5-15,
         continuous), then ``late_slope`` per step; ``bound_scale`` is then the
@@ -1509,9 +1371,8 @@ def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclus
     step budget), and, if ``tau_exclusion``, drops each subject's adaptation
     transient: trials with ``trial_number < ceil(tau)`` in blocks where the
     subject has a good adaptation fit (``get_adaptation_tau_fits`` on the
-    standard bias-corrected table, as in Figure04_RRvsBound and
-    Figure03S04/S06). No DT cutoff, no wall-hit exclusion, and positions are
-    raw (no bias correction) for the model itself.
+    bias-corrected |bound|, 40-trial window). No DT cutoff, no wall-hit
+    exclusion, and positions are raw (no bias correction) for the model itself.
 
     Parameters
     ----------
@@ -1539,7 +1400,7 @@ def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclus
     l_nochoice = d["choice"].isna()
     l_tau = pd.Series(False, index=d.index)
     if tau_exclusion:
-        # MXSC runs at SNRs only the CP calibration covers (as in Figure06).
+        # MXSC's SNRs are covered only by the change-point calibration.
         bias_file = BIAS_CORRECTION_CP_FILE if task_type == "MXSC" else BIAS_CORRECTION_FILE
         dc = get_data_table(task_type=task_type, combine_snr=False, correct_bias=bias_file)
         good_tau = get_adaptation_tau_fits(dc[dc["block_index"].isin(blocks)], blocks=blocks,
