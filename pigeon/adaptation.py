@@ -104,7 +104,7 @@ def fit_exp_tau(trial_nums, z_vals, tau_max, min_valid=8):
         )
         tau = float(popt[1])
         return tau, tau >= tau_max - 1e-6
-    except Exception:
+    except (RuntimeError, ValueError, np.linalg.LinAlgError):  # the fit failed to converge
         return np.nan, False
 
 
@@ -414,17 +414,17 @@ def get_adaptation_tau_fits(
     lgood = np.isfinite(taus) & ~lcensored
     good_tau = pd.DataFrame(np.where(lgood, taus, np.nan), index=subjects, columns=blocks)
 
-    return dict(
-        subjects=subjects,
-        trial_nums=trial_nums,
-        real_curves=real_curves,
-        perm_curves=perm_curves,
-        sig_within=sig_within,
-        sig_tau=sig_tau,
-        taus=taus,
-        censored=lcensored,
-        good_tau=good_tau,
-    )
+    return {
+        "subjects": subjects,
+        "trial_nums": trial_nums,
+        "real_curves": real_curves,
+        "perm_curves": perm_curves,
+        "sig_within": sig_within,
+        "sig_tau": sig_tau,
+        "taus": taus,
+        "censored": lcensored,
+        "good_tau": good_tau,
+    }
 
 
 def get_tau_exclusion_mask(data_table, good_tau):

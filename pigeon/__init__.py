@@ -52,29 +52,29 @@ stopping_model_nll       Negative log-likelihood under given stopping-model para
 get_stopping_model_trials Trials for stopping-model fits (the paper's trial selection).
 """
 
-from .data import get_data_table, get_bounds, get_good_trial_array, get_bound_summary, get_performance_summary
-from .simulation import simulate_trials, get_simulated_data_table
 from .adaptation import get_adaptation_tau_fits
+from .data import get_bound_summary, get_bounds, get_data_table, get_good_trial_array, get_performance_summary
+from .simulation import get_simulated_data_table, simulate_trials
 from .stopping import (
     fit_stopping_model,
     fit_stopping_models,
+    get_stopping_model_trials,
     simulate_stopping_trials,
     stopping_model_nll,
-    get_stopping_model_trials,
 )
 
 __all__ = [
-    "get_data_table",
-    "get_bounds",
-    "get_good_trial_array",
-    "get_bound_summary",
-    "get_performance_summary",
-    "simulate_trials",
-    "get_simulated_data_table",
-    "get_adaptation_tau_fits",
     "fit_stopping_model",
     "fit_stopping_models",
-    "simulate_stopping_trials",
-    "stopping_model_nll",
+    "get_adaptation_tau_fits",
+    "get_bound_summary",
+    "get_bounds",
+    "get_data_table",
+    "get_good_trial_array",
+    "get_performance_summary",
+    "get_simulated_data_table",
     "get_stopping_model_trials",
+    "simulate_stopping_trials",
+    "simulate_trials",
+    "stopping_model_nll",
 ]

@@ -28,8 +28,9 @@ def test_steps_before_decision_signed_toward_choice():
 
 
 def test_bias_correction_inverts_the_calibration_curve(tmp_path):
-    from pigeon.data import apply_bias_corrections
     import scipy.io
+
+    from pigeon.data import apply_bias_corrections
 
     # Calibration: measured = 1.5 x true in SNR bin 0 (|snr| < 0.5), measured = true in bin 1, 2 DT bins.
     sim_bounds = np.array([0.1, 0.2, 0.4])

@@ -41,7 +41,7 @@ def job(args):
     try:
         alt = fit_stopping_model(d, group_col=None, fixed=fixed, smooth_penalty=0.0)
         null = fit_stopping_model(d, group_col=None, fixed={**fixed, "late_slope": 0.0}, smooth_penalty=0.0)
-    except Exception as err:  # report per-condition failures instead of losing the run
+    except Exception as err:  # noqa: BLE001 -- report per-condition failures instead of losing the run
         return {**row, "error": repr(err)}
     p = alt["params"].iloc[0]
     lr = max(2 * (null["nll"] - alt["nll"]), 0.0)
@@ -86,7 +86,7 @@ def main():
     out.to_pickle(OUT)
     log(
         f"done in {(time.time() - t0) / 60:.1f} min; {int(out.error.notna().sum())} raised; "
-        f"not converged: alt {int((out.success_alt == False).sum())}, null {int((out.success_null == False).sum())}; "  # noqa: E712
+        f"not converged: alt {int((out.success_alt == False).sum())}, null {int((out.success_null == False).sum())}; "
         f"wrote {OUT}"
     )
 

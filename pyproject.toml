@@ -24,3 +24,6 @@ line-length = 120   # the length the existing code is written to
 
 [tool.pytest.ini_options]
 pythonpath = ["."]   # tests import the pigeon package from the project root
+
+[tool.ruff.lint.per-file-ignores]
+"pigeon/pathDefaults.py" = ["N999"]   # module name kept: every notebook imports pigeon.pathDefaults

@@ -40,12 +40,12 @@ MIN_BOUND = 0.03  # minimum allowed bound (prevents degenerate zero-bound trials
 # same conditions at high SNR) are no penalty, coin penalty (4 coins per error) and step penalty (30 steps per
 # error); 600 steps per block.
 BLOCK_DEFAULTS = {
-    1: dict(steps_per_block=600, coins_gained=1, coins_lost=0, steps_lost=0),
-    2: dict(steps_per_block=600, coins_gained=1, coins_lost=4, steps_lost=0),
-    3: dict(steps_per_block=600, coins_gained=1, coins_lost=0, steps_lost=30),
-    4: dict(steps_per_block=600, coins_gained=1, coins_lost=0, steps_lost=0),
-    5: dict(steps_per_block=600, coins_gained=1, coins_lost=4, steps_lost=0),
-    6: dict(steps_per_block=600, coins_gained=1, coins_lost=0, steps_lost=30),
+    1: {"steps_per_block": 600, "coins_gained": 1, "coins_lost": 0, "steps_lost": 0},
+    2: {"steps_per_block": 600, "coins_gained": 1, "coins_lost": 4, "steps_lost": 0},
+    3: {"steps_per_block": 600, "coins_gained": 1, "coins_lost": 0, "steps_lost": 30},
+    4: {"steps_per_block": 600, "coins_gained": 1, "coins_lost": 0, "steps_lost": 0},
+    5: {"steps_per_block": 600, "coins_gained": 1, "coins_lost": 4, "steps_lost": 0},
+    6: {"steps_per_block": 600, "coins_gained": 1, "coins_lost": 0, "steps_lost": 30},
 }
 
 # Same reward rules, but PD's step budget is 800/block (the raw PD CSVs' tc_steps_max field, constant across

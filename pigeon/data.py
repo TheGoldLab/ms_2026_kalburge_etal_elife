@@ -38,14 +38,14 @@ WALL : float
 
 from __future__ import annotations
 
-import os
 import glob
+import os
 
 import numpy as np
 import pandas as pd
 import scipy.io
 
-from .pathDefaults import RAW_DATA_DIR, BIAS_CORRECTION_FILE
+from .pathDefaults import BIAS_CORRECTION_FILE, RAW_DATA_DIR
 
 WALL = 0.75  # screen-edge limit; trials where any step position reaches |WALL| are flagged wall_hit = True
 

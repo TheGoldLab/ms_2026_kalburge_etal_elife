@@ -632,7 +632,7 @@ class _Layout:
         self.anchor_idx = anchor_idx
         spec = []  # (name, size, limits)
         G = n_groups
-        size = lambda name: 1 if name in self.shared else G  # noqa: E731
+        size = lambda name: 1 if name in self.shared else G
         spec += [
             ("bound_scale", size("bound_scale"), _LOG_POS_LIMITS),
             ("bound_cv", size("bound_cv"), _LOG_CV_LIMITS),
@@ -1071,8 +1071,8 @@ def fit_stopping_model(
     return {
         "params": table,
         "nll": float(objective(res.x)[1]),
-        "n_trials": int(len(lens)),
-        "n_params": int(len(res.x)),
+        "n_trials": len(lens),
+        "n_params": len(res.x),
         "success": bool(res.success),
         "message": str(res.message),
         "theta": res.x,
@@ -1162,7 +1162,7 @@ def simulate_stopping_trials(
     if rng is None:
         rng = np.random.default_rng()
     n = int(num_trials)
-    post = lambda v, d: d if v is None else v  # noqa: E731
+    post = lambda v, d: d if v is None else v
     cp = np.broadcast_to(np.asarray(change_point, int), (n,))
     j = np.arange(max_steps + 1)[None, :]
     lpost = (cp[:, None] > 0) & (j >= cp[:, None])
@@ -1374,7 +1374,7 @@ def _fit_one_subject(args):
     subject, table, kwargs = args
     try:
         fit = fit_stopping_model(table, **kwargs)
-    except Exception as err:  # report per-subject failures instead of losing the whole run
+    except Exception as err:  # noqa: BLE001 -- report per-subject failures instead of losing the whole run
         return subject, None, repr(err)
     return subject, fit, None
 
@@ -1565,7 +1565,7 @@ def infer_bounds_like_data(sim_table, max_ndt=5, peak_step_bound=True):
     for col in ("bound", "DT", "rt_cutoff"):
         out[col] = np.nan
     for _, g in out.groupby(keys):
-        bounds, dts, rts, _, cutoffs = get_bounds(
+        bounds, dts, _, _, cutoffs = get_bounds(
             list(g["steps"]),
             g["choice"].to_numpy(float),
             snr=np.abs(g["snr"].to_numpy(float)),

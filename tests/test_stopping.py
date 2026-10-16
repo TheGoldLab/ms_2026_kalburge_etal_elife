@@ -19,7 +19,14 @@ from pigeon.stopping import (
     stopping_model_nll,
 )
 
-TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03, sensory_std=0.02)
+TRUE = {
+    "bound_scale": 0.2,
+    "bound_cv": 0.3,
+    "guess_rate": 0.03,
+    "lapse_rate": 0.04,
+    "anticipation_rate": 0.03,
+    "sensory_std": 0.02,
+}
 NDT_PROBS = (0.7, 0.3)
 COLLAPSE = np.array([0.3, 0.0, -0.4])  # log h at KNOTS (1, 6, 16); 0 at the anchor (step 6)
 
@@ -230,7 +237,7 @@ def test_fit_recovers_knee_time_course():
 def test_knee_multi_start_keeps_the_best_start():
     # A late knee (7): the fit from several starting knees must do at least as well as every single start.
     d = _sim(1500, 0.02, 17, knee_shape=(0.8, 7.0, -0.01))
-    kw = dict(group_col=None, time_course_form="knee", smooth_penalty=0.0)
+    kw = {"group_col": None, "time_course_form": "knee", "smooth_penalty": 0.0}
     multi = fit_stopping_model(d, knee_starts=(2.0, 4.0, 7.0), **kw)
     singles = [fit_stopping_model(d, knee_starts=(k,), **kw)["nll"] for k in (2.0, 4.0, 7.0)]
     assert multi["nll"] <= min(singles) + 1e-6
