@@ -26,6 +26,11 @@ adaptation
     Figure04_RRvsBound (source of the tau insets in panels D-F) and any
     notebook that gates trials on a subject's own adaptation time constant.
 
+ideal_observer
+    Reward-rate-optimal bounds by dynamic programming, including a reward that
+    switches at a fixed step of every trial (design of the RC task; used by
+    Test_cpRDesign). Imported directly (`from pigeon.ideal_observer import ...`).
+
 plotting
     Shared style helpers for the figure/table notebooks (FONT_RC,
     add_panel_label, and condition/task label dicts). Imported directly
