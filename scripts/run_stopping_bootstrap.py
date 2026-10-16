@@ -3,7 +3,8 @@
 Simulates every subject NUM_REPS times from their own main-variant fit
 (data/processed/stopping_fits_main.pkl), on their real trial structure (same
 blocks, trial counts, SNRs and step statistics), refits each simulated data
-set with the same defaults, and saves true vs. fitted parameters. The spread
+set with the same defaults (one start, at the generating knee, rather than
+the multi-start search), and saves true vs. fitted parameters. The spread
 of a subject's refits gives a confidence interval on their parameters
 (e.g. the bound plateau), and the agreement between simulated and refit
 values shows which parameters can be told apart (e.g. sensory noise, bound
@@ -58,7 +59,10 @@ def main():
         # Each replicate is fit as its own subject-session (ids subject * 100 + rep).
         sim["subject_index"] = sim["subject_index"] * 100 + sim["rep"]
         t0 = time.time()
-        f_fit = fit_stopping_models(sim, group_col="condition")
+        # Each refit starts once, at the knee that generated it, instead of from KNEE_STARTS (a third of the time).
+        knees = f_true.groupby("subject_index").knee.first()
+        starts = {s: {"knee_starts": (float(knees[s // 100]),)} for s in sim["subject_index"].unique()}
+        f_fit = fit_stopping_models(sim, group_col="condition", subject_kwargs=starts)
         log(
             f"{task}: refit {f_fit.subject_index.nunique()} simulated sessions in {(time.time() - t0) / 60:.1f} min; "
             f"{int((~f_fit.groupby('subject_index').success.first()).sum())} did not converge"
