@@ -54,7 +54,8 @@ BLOCK_DEFAULTS_PD = {block: dict(rules, steps_per_block=800) for block, rules in
 
 
 def simulate_trials(generative_mean=0.05, generative_std=0.15, num_trials=1_000_000, max_steps=50,
-                    bound_mean=0.0, bound_std=0.0, ndt_min=1, ndt_max=1, rng=None, return_steps=True):
+                    bound_mean=0.0, bound_std=0.0, ndt_min=1, ndt_max=1, ndt_probs=None, rng=None,
+                    return_steps=True):
     """
     Simulate fixed-bound trials (core engine).
     Translated from getPigeon_simulatedData.m.
@@ -74,8 +75,11 @@ def simulate_trials(generative_mean=0.05, generative_std=0.15, num_trials=1_000_
     bound_std : float
         Trial-to-trial SD of the bound (0 = fixed), floored at MIN_BOUND.
     ndt_min, ndt_max : int
-        NDT (steps) drawn uniformly from {ndt_min, ..., ndt_max}, then limited
-        so that RT <= max_steps.
+        NDT (steps) drawn from {ndt_min, ..., ndt_max}, then limited so that
+        RT <= max_steps. NDT 0 means the response comes on the step that
+        reaches the bound (the predefined-bound task).
+    ndt_probs : sequence of float or None
+        Probability of each NDT value ndt_min..ndt_max; None = uniform.
     rng : np.random.Generator or None
     return_steps : bool
         Also return each trial's position sequence (skip for large calibration runs).
@@ -114,7 +118,10 @@ def simulate_trials(generative_mean=0.05, generative_std=0.15, num_trials=1_000_
     if bound_std > 0:
         bound_per_trial = np.maximum(MIN_BOUND, rng.normal(bound_per_trial, bound_std))
 
-    ndts = rng.integers(ndt_min, ndt_max + 1, size=num_trials)
+    if ndt_probs is None:
+        ndts = rng.integers(ndt_min, ndt_max + 1, size=num_trials)
+    else:
+        ndts = rng.choice(np.arange(ndt_min, ndt_max + 1), size=num_trials, p=np.asarray(ndt_probs) / np.sum(ndt_probs))
 
     # First bound crossings, fully vectorized (no Python step loop).
     abs_DV = np.abs(DV[:, :max_steps])
@@ -130,8 +137,8 @@ def simulate_trials(generative_mean=0.05, generative_std=0.15, num_trials=1_000_
     if normal.any():
         rows = np.where(normal)[0]
         ss = first_ss[rows]
-        # Limit the NDT so that DT >= 1 and RT = crossing + NDT + 1 <= max_steps.
-        ndts[rows] = np.clip(ndts[rows], 1, max_steps - ss - 1)
+        # Limit the NDT so that RT = crossing + NDT + 1 <= max_steps.
+        ndts[rows] = np.clip(ndts[rows], 0, max_steps - ss - 1)
         rts[rows] = ss + ndts[rows] + 1
         choices[rows] = (DV[rows, ss] > 0).astype(float)
         bounds_out[rows] = bound_per_trial[rows]
@@ -149,8 +156,8 @@ def simulate_trials(generative_mean=0.05, generative_std=0.15, num_trials=1_000_
 
 
 def get_simulated_data_table(specs, generative_mean=0.05, generative_std=0.15, num_trials=600, max_steps=50,
-                             bound_mean=0.0, bound_std=0.0, ndt_min=1, ndt_max=1, correct_bias=None, rng=None,
-                             block_defaults=BLOCK_DEFAULTS):
+                             bound_mean=0.0, bound_std=0.0, ndt_min=1, ndt_max=1, ndt_probs=None, correct_bias=None,
+                             rng=None, block_defaults=BLOCK_DEFAULTS):
     """
     Simulate whole blocks of fixed-bound trials in the format of get_data_table().
     Translated from getPigeon_simulatedDataTable.m.
@@ -165,7 +172,7 @@ def get_simulated_data_table(specs, generative_mean=0.05, generative_std=0.15, n
     ----------
     specs : dict
         'num_subjects' (int) and 'blocks' (int or list of block numbers in block_defaults).
-    generative_mean, generative_std, max_steps, bound_mean, bound_std, ndt_min, ndt_max
+    generative_mean, generative_std, max_steps, bound_mean, bound_std, ndt_min, ndt_max, ndt_probs
         Passed to simulate_trials (shared by all subjects and blocks). For
         mixed SNR with one bound per SNR, pass matching lists of
         generative_mean and bound_mean.
@@ -195,7 +202,7 @@ def get_simulated_data_table(specs, generative_mean=0.05, generative_std=0.15, n
             choices, rts, _, _, _, snrs, steps = simulate_trials(
                 generative_mean=generative_mean, generative_std=generative_std, num_trials=num_trials,
                 max_steps=max_steps, bound_mean=bound_mean, bound_std=bound_std, ndt_min=ndt_min,
-                ndt_max=ndt_max, rng=rng)
+                ndt_max=ndt_max, ndt_probs=ndt_probs, rng=rng)
 
             # Cumulative steps and coins; stop when the step budget is reached
             step_counts = np.cumsum(rts + rules['steps_lost'] * (choices == 0))

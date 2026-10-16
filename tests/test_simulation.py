@@ -31,3 +31,14 @@ def test_simulated_block_respects_step_budget_and_rewards():
         assert done.RT.sum() <= rules["steps_per_block"]
         expected = rules["coins_gained"] * (done.choice == 1).sum() - rules["coins_lost"] * (done.choice == 0).sum()
         assert g.coin_count.iloc[-1] == expected
+
+
+def test_ndt_probabilities_and_zero_ndt():
+    _, _, _, _, ndts, _, _ = simulate_trials(generative_mean=0.15, num_trials=20000, bound_mean=0.3, ndt_min=1,
+                                             ndt_max=2, ndt_probs=(0.7, 0.3), rng=np.random.default_rng(3))
+    assert abs(np.mean(ndts == 1) - 0.7) < 0.02
+    choices, rts, DV, _, _, _, _ = simulate_trials(generative_mean=0.15, num_trials=2000, bound_mean=0.3, ndt_min=0,
+                                                   ndt_max=0, rng=np.random.default_rng(4))
+    lc = np.isfinite(choices)
+    last = np.abs(DV[lc, rts[lc] - 1])                              # the response comes at the crossing step
+    assert np.all(last >= 0.3) and np.all(np.abs(DV[lc, np.maximum(rts[lc] - 2, 0)])[rts[lc] > 1] < 0.3)
