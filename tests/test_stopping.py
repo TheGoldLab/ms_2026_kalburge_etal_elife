@@ -4,8 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pigeon.stopping import (KNOTS, bound_time_course, fit_stopping_model, get_choice_probabilities,
-                             get_commit_hazard_table, get_commit_sources, get_commit_type_probabilities,
+from pigeon.stopping import (KNEE_PARAMS, KNOTS, _knee_log_h, bound_time_course, fit_stopping_model,
+                             get_choice_probabilities, get_commit_hazard_table, get_commit_sources,
+                             get_commit_type_probabilities,
                              get_effective_bounds, get_plateau_at_limit, simulate_stopping_data_table,
                              simulate_stopping_trials, stopping_model_nll)
 
@@ -80,6 +81,36 @@ def test_fit_recovers_post_change_point_slope():
                            smooth_penalty=0.0)["params"].iloc[0]
     assert abs(p["slope_post"] + 0.06) < 0.02
     assert abs(p["bound_scale_post"] - 0.25) < 0.04
+
+
+def test_fit_recovers_pre_change_point_slope_and_step():
+    # Anticipatory tilt anchored at the change point plus a step there: both recovered together.
+    d = _sim(4000, 0.01, 11, change_point=10, generative_mean_post=0.03, bound_scale_post=0.14,
+             slope_pre=0.05).assign(block_index=3)
+    truth = {**TRUE, "ndt_probs": NDT_PROBS, "bound_scale_post": 0.14, "slope_pre": 0.05}
+    nll_true = stopping_model_nll(d, truth, group_col="block_index")
+    assert stopping_model_nll(d, {**truth, "slope_pre": 0.0}, group_col="block_index") > nll_true
+    p = fit_stopping_model(d, post_params=("bound_scale", "pre_slope"), time_course="flat",
+                           smooth_penalty=0.0)["params"].iloc[0]
+    assert abs(p["slope_pre"] - 0.05) < 0.02
+    assert abs(p["bound_scale"] - 0.2) < 0.025
+    assert abs(p["bound_scale_post"] - 0.14) < 0.025
+
+
+def test_fit_recovers_start_anchored_pre_slope_with_varied_change_points():
+    # A tilt in elapsed steps (anchored at step 1) with change points from 4 to 13: the anchor matters only
+    # when change points vary, and the matching anchor must fit better than the change-point anchor.
+    cps = np.random.default_rng(12).integers(4, 14, 4000)
+    d = _sim(4000, 0.01, 12, change_point=cps, generative_mean_post=0.03, bound_scale_post=0.14,
+             slope_pre=0.04, pre_slope_anchor="start").assign(block_index=3)
+    truth = {**TRUE, "ndt_probs": NDT_PROBS, "bound_scale_post": 0.14, "slope_pre": 0.04}
+    nll = {a: stopping_model_nll(d, truth, group_col="block_index", pre_slope_anchor=a)
+           for a in ("start", "change_point")}
+    assert nll["start"] < nll["change_point"]
+    p = fit_stopping_model(d, post_params=("bound_scale", "pre_slope"), time_course="flat", smooth_penalty=0.0,
+                           pre_slope_anchor="start")["params"].iloc[0]
+    assert abs(p["slope_pre"] - 0.04) < 0.015
+    assert abs(p["bound_scale"] - 0.2) < 0.025
 
 
 def test_wall_hit_trials_are_censored_not_misfit():
@@ -163,6 +194,16 @@ def test_fit_recovers_knee_time_course():
         atol=0.04)
 
 
+def test_knee_multi_start_keeps_the_best_start():
+    # A late knee (7): the fit from several starting knees must do at least as well as every single start.
+    d = _sim(1500, 0.02, 17, knee_shape=(0.8, 7.0, -0.01))
+    kw = dict(group_col=None, time_course_form="knee", smooth_penalty=0.0)
+    multi = fit_stopping_model(d, knee_starts=(2.0, 4.0, 7.0), **kw)
+    singles = [fit_stopping_model(d, knee_starts=(k,), **kw)["nll"] for k in (2.0, 4.0, 7.0)]
+    assert multi["nll"] <= min(singles) + 1e-6
+    assert abs(multi["params"].iloc[0]["knee"] - 7.0) < 1.5
+
+
 def test_fit_recovers_time_course_per_column_within_a_mixed_group():
     # One block (one set of scale/CV/rates) with trials from two SNRs that differ only in time-course shape.
     lo = _sim(3000, 0.02, 15, knee_shape=(0.9, 4.0, -0.01)).assign(snr_level="lo")
@@ -173,7 +214,13 @@ def test_fit_recovers_time_course_per_column_within_a_mixed_group():
     assert r["success"] and list(t.index) == ["hi", "lo"]
     assert (t["n_trials"] == 3000).all() and t["bound_scale"].nunique() == 1
     assert r["n_params"] == 5 + 1 + 1 + 2 * 3
-    assert abs(t.loc["lo", "log_h_start"] - 0.9) < 0.3 and abs(t.loc["hi", "log_h_start"] - 0.2) < 0.3
+    # Few commits happen at step 1, so log_h_start trades off against the knee (the best of the multi-start
+    # fits here has lo start 1.28, knee 3.6, at lower NLL than the truth's basin); check the shape from step 3.
+    steps = np.arange(3, 11)
+    for tc, (a, k, sl) in {"lo": (0.9, 4.0, -0.01), "hi": (0.2, 2.5, -0.03)}.items():
+        fit = _knee_log_h(*(t.loc[tc, c] for c in KNEE_PARAMS), steps)[0]
+        assert np.allclose(fit, _knee_log_h(a, k, sl, steps)[0], atol=0.1)
+    assert t.loc["lo", "log_h_start"] > t.loc["hi", "log_h_start"] + 0.4
     assert abs(t.loc["lo", "knee"] - 4.0) < 1.2
     with pytest.raises(ValueError):
         get_commit_type_probabilities(d.assign(subject_index=1), r["params"].assign(subject_index=1),
