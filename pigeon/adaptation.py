@@ -1,11 +1,10 @@
 """
-Within-block adaptation time-constant (tau) fits.
+Within-block adaptation time-constant (tau) fits, and trial-to-trial structure of the bound.
 
-Shared by ``Figure04_RRvsBound`` (source of the tau insets in panels D-F) and
-any other notebook that needs to gate trials on a subject's own within-block
-adaptation time constant (e.g. ``archive/Figure03S04_sequentialAnalysis``). Extracted
-from ``Figure04_RRvsBound`` so both notebooks fit tau from the same pipeline,
-with the same eligibility criteria, on the same data.
+The tau fits give the adaptation curves and tau insets of Figure04_RRvsBound
+and Figure04S01_RRvsBoundPD, and the adaptation transient that
+``pigeon.stopping.get_stopping_model_trials`` drops before every stopping-model
+fit (``get_tau_exclusion_mask``).
 
 Pipeline
 --------
@@ -255,12 +254,9 @@ def group_null_band(perm_curves, alpha=0.05):
 def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
     """
     Per-subject test of whether steady-state |bound| differs between block[i-1] and
-    block[i] (i = 1 .. len(blocks)-1). Uses the same default trial-quality filtering as
-    get_bound_summary (DT>=2, trial_number>=10, wall_hit and rt_below_cutoff excluded) --
-    i.e. this is the same steady-state bound quantity compared in the block-vs-block
-    scatter plots earlier in this notebook, but tested per subject with an unpaired,
-    two-sided Mann-Whitney U test (no normality assumption) instead of only at the
-    group level.
+    block[i] (i = 1 .. len(blocks)-1): an unpaired, two-sided Mann-Whitney U test on
+    the trials passing get_good_trial_array's default filter (DT >= 2,
+    trial_number >= 10, no wall hit, RT cutoff).
 
     Parameters
     ----------
@@ -313,10 +309,11 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
                             alpha=0.05, between_min_trials=5,
                             value_col='abs_bound', zscore=True):
     """
-    Fit within-block adaptation time constants (tau) per subject per block, using
-    the same pipeline and eligibility criteria as the Figure04_RRvsBound tau insets
-    (panels D-F): block 1 eligibility is within-block adaptation significance;
-    blocks 2+ eligibility is significant change vs. the immediately preceding block.
+    Fit within-block adaptation time constants (tau) per subject per block.
+
+    Block 1 eligibility is within-block adaptation significance (the subject's
+    curve vs. its permutation null); blocks 2+ eligibility is a significant change
+    of steady-state |bound| from the immediately preceding block.
 
     Parameters
     ----------
@@ -351,7 +348,11 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
     dict with keys:
       subjects    : list of subject indices (row order of all per-subject arrays)
       trial_nums  : (max_trial,) int array
-      real_curves : (n_subjects, max_trial, n_blocks) smoothed z-scored |bound| curves
+      real_curves : (n_subjects, max_trial, n_blocks) smoothed (z-scored) value_col curves
+      perm_curves : (n_perm, n_subjects, max_trial, n_blocks) trial-order permutation
+                    nulls of real_curves (for group_null_band)
+      sig_within  : (n_subjects, n_blocks) bool -- within-block adaptation (curve vs.
+                    its permutation null), every block
       sig_tau     : (n_subjects, n_blocks) bool -- tau-fit eligibility. Block 0's
                     within-block test already implies curve data exists (NaN
                     p-value -> not significant); blocks 1+ additionally require
@@ -398,19 +399,17 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
     good_tau = pd.DataFrame(
         np.where(lgood, taus, np.nan), index=subjects, columns=blocks)
 
-    return dict(subjects=subjects, trial_nums=trial_nums, real_curves=real_curves,
-                sig_tau=sig_tau, taus=taus, censored=lcensored, good_tau=good_tau)
+    return dict(subjects=subjects, trial_nums=trial_nums, real_curves=real_curves, perm_curves=perm_curves,
+                sig_within=sig_within, sig_tau=sig_tau, taus=taus, censored=lcensored, good_tau=good_tau)
 
 
 def get_tau_exclusion_mask(data_table, good_tau):
     """
     Keep-mask that drops each subject's adaptation transient at the start of a block.
 
-    The convention used by Figure03S04 / Figure03S05 / Figure03S06 (their local
-    ``tau_exclusion_mask`` / ``make_tau_exclusion_mask``): for a subject with a
-    good tau fit in a block, trials with ``trial_number < ceil(tau)`` are
-    dropped; subjects without a good fit (ineligible, failed, or censored) keep
-    all their trials. Applied on top of the standard quality filters.
+    For a subject with a good tau fit in a block, trials with
+    ``trial_number < ceil(tau)`` are dropped; subjects without a good fit
+    (ineligible, failed, or censored) keep all their trials.
 
     Parameters
     ----------

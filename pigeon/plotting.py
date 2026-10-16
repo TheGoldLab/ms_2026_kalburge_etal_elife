@@ -1,9 +1,19 @@
-"""Shared style helpers for the figure/table notebooks.
+"""Shared style for the figure notebooks.
 
-FONT_RC embeds real (non-Type-3) font outlines in saved PDFs/EPS and sets
-Helvetica as the typeface, so figure text survives as editable text objects
-rather than per-character vector paths when opened in Illustrator etc.
+Every paper figure uses the same fonts and color roles: ``use_figure_style()``
+sets 12-pt axis and tick labels (``FS``) in Helvetica, with fonts embedded so
+figure text stays editable in Illustrator; in-panel text (legends, statistics)
+is ``FS_INSET`` = 8 pt; figure sizes are given in cm (``CM`` converts to
+inches); panel letters come from ``add_panel_label``. Data are black, the
+fitted stopping model blue and optimal benchmarks red (``DATA_COLOR``,
+``MODEL_COLOR``, ``OPTIMAL_COLOR``).
 """
+
+import matplotlib.pyplot as plt
+
+CM = 1 / 2.54  # inches per cm, for figure sizes given in cm
+FS = 12  # axis and tick labels (pt)
+FS_INSET = 8  # in-panel text: legends, statistics, colorbar labels (pt)
 
 FONT_RC = {
     'font.family': 'sans-serif',
@@ -25,8 +35,37 @@ MODEL_COLOR = 'tab:blue'
 OPTIMAL_COLOR = 'tab:red'
 
 # Row labels for figures with one row per task variant (OL = blocked SNR,
-# MX = mixed SNR), e.g. Figure05_mixedVsBlockedSNR, Figure05S01_boundDiffByDT.
+# MX = mixed SNR), e.g. Figure05_mixedVsBlockedSNR.
 TASK_ROW_LABELS = {'OL': 'Blocked SNR', 'MX': 'Mixed SNR'}
+
+
+def use_figure_style():
+    """
+    Set matplotlib's fonts for paper figures: ``FS``-pt labels, titles and ticks, ``FONT_RC``.
+
+    Call before creating any axes: axes take their tick-label size when they are created.
+    """
+    plt.rcParams.update({'font.size': FS, 'axes.labelsize': FS, 'axes.titlesize': FS,
+                         'xtick.labelsize': FS, 'ytick.labelsize': FS, **FONT_RC})
+
+
+def add_row_xlabel(fig, axes, label, pad=0.005):
+    """
+    One x label centered under a row of panels that share it, just below their tick labels.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+    axes : sequence of matplotlib.axes.Axes
+        The row, left to right.
+    label : str
+    pad : float
+        Gap below the lowest tick label, in figure-height fractions.
+    """
+    fig.canvas.draw()
+    left, right = axes[0].get_position().x0, axes[-1].get_position().x1
+    bottom = min(ax.get_tightbbox().transformed(fig.transFigure.inverted()).y0 for ax in axes)
+    fig.text((left + right) / 2, bottom - pad, label, ha='center', va='top', fontsize=FS)
 
 
 def add_panel_label(ax, label, dx=-0.15, dy=1.08):
