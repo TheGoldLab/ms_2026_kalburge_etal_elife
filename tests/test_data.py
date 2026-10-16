@@ -16,3 +16,34 @@ def test_steps_before_decision_signed_toward_choice():
     assert np.isnan(s.loc[1, "step_2"])
     assert s.loc[2, "step_0"] == 0.4 and np.isnan(s.loc[2, "step_1"])
     assert s.loc[3].isna().all()
+
+
+def test_bias_correction_inverts_the_calibration_curve(tmp_path):
+    from pigeon.data import apply_bias_corrections
+    import scipy.io
+
+    # Calibration: measured = 1.5 x true in SNR bin 0 (|snr| < 0.5), measured = true in bin 1, 2 DT bins.
+    sim_bounds = np.array([0.1, 0.2, 0.4])
+    summary = np.stack([np.stack([1.5 * sim_bounds, sim_bounds], axis=1)] * 2, axis=1)   # (bounds, DT, SNR)
+    path = tmp_path / "calib.mat"
+    scipy.io.savemat(path, {"boundSummary": summary, "simBounds": sim_bounds, "snrBinEdges": np.array([0.5])})
+    d = pd.DataFrame({"bound": [0.3, -0.3, 0.9, 0.3, 0.3, 0.3], "DT": [1, 1, 2, 7, 1, np.nan],
+                      "snr": [0.2, -0.2, 0.2, 0.2, 0.8, 0.2]})
+    out = apply_bias_corrections(d, path)
+    np.testing.assert_allclose(out["bound"][:5], [0.2, -0.2, 0.6, 0.2, 0.3])   # 0.9 -> 0.6: extrapolated
+    assert out["bound"][5] == 0.3                                             # no DT: left uncorrected
+    np.testing.assert_allclose(out["abs_bound"], np.abs(out["bound"]))
+
+
+def test_bound_summary_by_block_snr_and_dt():
+    from pigeon.data import get_bound_summary
+
+    d = pd.DataFrame({"subject_index": [1, 1, 1, 2], "block_index": [1, 1, 1, 1], "bound": [0.2, -0.4, 0.3, 0.5],
+                      "DT": [2, 2, 3, 2], "snr": [0.3, 0.3, -1.0, 0.3], "correct": [1, 0, 1, 1],
+                      "trial_number": [10, 11, 12, 10], "wall_hit": False, "rt_below_cutoff": False})
+    s = get_bound_summary(d, max_rt=3)
+    assert s.shape == (2, 1, 2, 3, 3)                       # subjects, blocks, |snr| (0.3, 1.0), DT 1-3, stats
+    np.testing.assert_allclose(s[0, 0, 0, 1], [0.3, np.std([0.2, 0.4], ddof=1), 2])
+    np.testing.assert_allclose(s[0, 0, 1, 2], [0.3, np.nan, 1])
+    pooled = get_bound_summary(d, split_by_snr=False, max_rt="all")
+    np.testing.assert_allclose(pooled[0, 0, 0, 0, [0, 2]], [0.3, 3])

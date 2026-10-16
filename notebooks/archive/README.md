@@ -1,7 +1,19 @@
 # Archived notebooks
 
-These are the Figure 3 supplements from before the stopping-model rebuild. They were archived on 2026-10-11, and their figures are backed up in `../Figures/backup_2026-10-11_stoppingModel/`.
+Notebooks that no longer produce a paper figure or a pipeline input. They are kept for reference and
+are not maintained: some import functions that have since been removed from `pigeon` (see git
+history), and all were written to run from `notebooks/` (to run one from here, change
+`sys.path.insert(0, '..')` to `'../..'` and `Path('../data/...')` to `Path('../../data/...')`).
 
-They were written to run from `notebooks/`. To run one from here, change `sys.path.insert(0, '..')` to `'../..'` and change `Path('../data/...')` to `Path('../../data/...')`.
-
-`Figure05S01_boundDiffByDT.ipynb` (high − low SNR difference in measured bounds by DT) was archived on 2026-10-12. Figure 5 Supplement 1 is now `Figure05S01_collapseByCondition.ipynb` (stopping-model late slope in every condition).
+| Notebook | What it was |
+|---|---|
+| `Figure03S01_congruenceByRT`, `Figure03S02_stepSizeBeforeBound`, `Figure03S03_boundTest`, `Figure03S04_sequentialAnalysis`, `Figure03S06_conditionalAccuracy` | Figure 3 supplements from before the stopping model (fixed-bound simulations as the comparison) |
+| `Figure03S02_commitHazard` | Model-free commit hazard by position and step |
+| `Figure03S05_sequentialAnalysisPD` | Sequential structure of the bounds set in the predefined-bound task |
+| `Figure05S01_boundDiffByDT` | High − low SNR difference of measured bounds by DT |
+| `Figure07_biasCorrection` | Bias-correction example figure |
+| `Table_slopeAnalyses` | Slopes of measured bound vs. DT and of Δbound vs. bound, all blocks |
+| `Make_RRMatrix`, `Test_cpData`, `Test_cpDesign` | Change-point analyses based on reward-rate gradients over pre-/post-change bound grids, and the SNR choice for the 2026 change-point task |
+| `Test_stoppingModel` | Development of the stopping model: recovery, variants, posterior checks |
+| `Test_trialQuality` | Congruence vs. RT, to separate decisions from guesses |
+| `Test_subjectRawData` | One change-point subject's bounds and trajectories, all four blocks |
