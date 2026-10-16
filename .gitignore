@@ -2,3 +2,14 @@ __pycache__/
 *.pyc
 .DS_Store
 .venv
+.pytest_cache/
+.ruff_cache/
+
+# Regenerable outputs of scripts/ and notebooks (fits, simulations, run logs, backups)
+data/processed/*.pkl
+data/processed/*.log
+data/processed/backup_*/
+data/processed/stopping_fits_round*/
+
+# Generated PDFs of archived notebooks
+notebooks/archive/*.pdf
