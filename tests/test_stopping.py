@@ -4,16 +4,24 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pigeon.stopping import (KNEE_PARAMS, KNOTS, _knee_log_h, bound_time_course, fit_stopping_model,
-                             get_choice_probabilities, get_commit_sources,
-                             get_commit_type_probabilities,
-                             get_plateau_at_limit, simulate_stopping_data_table,
-                             simulate_stopping_trials, stopping_model_nll)
+from pigeon.stopping import (
+    KNEE_PARAMS,
+    KNOTS,
+    _knee_log_h,
+    bound_time_course,
+    fit_stopping_model,
+    get_choice_probabilities,
+    get_commit_sources,
+    get_commit_type_probabilities,
+    get_plateau_at_limit,
+    simulate_stopping_data_table,
+    simulate_stopping_trials,
+    stopping_model_nll,
+)
 
-TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03,
-            sensory_std=0.02)
+TRUE = dict(bound_scale=0.2, bound_cv=0.3, guess_rate=0.03, lapse_rate=0.04, anticipation_rate=0.03, sensory_std=0.02)
 NDT_PROBS = (0.7, 0.3)
-COLLAPSE = np.array([0.3, 0.0, -0.4])   # log h at KNOTS (1, 6, 16); 0 at the anchor (step 6)
+COLLAPSE = np.array([0.3, 0.0, -0.4])  # log h at KNOTS (1, 6, 16); 0 at the anchor (step 6)
 
 
 def _sim(n, gm, seed, **kw):
@@ -35,8 +43,13 @@ def test_nll_is_lower_at_truth_than_perturbed():
     d = _sim(3000, 0.02, 1, log_h=COLLAPSE)
     truth = {**TRUE, "ndt_probs": NDT_PROBS, "log_h": COLLAPSE}
     nll_true = stopping_model_nll(d, truth, group_col=None)
-    for name, val in [("bound_scale", 0.28), ("bound_cv", 0.1), ("guess_rate", 0.1),
-                      ("sensory_std", 0.08), ("log_h", np.zeros(3))]:
+    for name, val in [
+        ("bound_scale", 0.28),
+        ("bound_cv", 0.1),
+        ("guess_rate", 0.1),
+        ("sensory_std", 0.08),
+        ("log_h", np.zeros(3)),
+    ]:
         assert stopping_model_nll(d, {**truth, name: val}, group_col=None) > nll_true
 
 
@@ -61,10 +74,13 @@ def test_fit_recovers_parameters_and_time_course():
 
 
 def test_fit_recovers_change_point_shift():
-    d = pd.concat([
-        _sim(2500, 0.01, 4, change_point=6, generative_mean_post=0.03, bound_scale_post=0.13).assign(block_index=3),
-        _sim(2500, 0.03, 5, change_point=6, generative_mean_post=0.01, bound_scale_post=0.28).assign(block_index=4),
-    ], ignore_index=True)
+    d = pd.concat(
+        [
+            _sim(2500, 0.01, 4, change_point=6, generative_mean_post=0.03, bound_scale_post=0.13).assign(block_index=3),
+            _sim(2500, 0.03, 5, change_point=6, generative_mean_post=0.01, bound_scale_post=0.28).assign(block_index=4),
+        ],
+        ignore_index=True,
+    )
     p = fit_stopping_model(d, post_params=("bound_scale",), time_course="flat")["params"].set_index("group")
     assert abs(p.loc[3, "bound_scale_post"] - 0.13) < 0.025
     assert abs(p.loc[4, "bound_scale_post"] - 0.28) < 0.04
@@ -72,26 +88,30 @@ def test_fit_recovers_change_point_shift():
 
 
 def test_fit_recovers_post_change_point_slope():
-    d = _sim(4000, 0.01, 10, change_point=4, generative_mean_post=0.01, bound_scale_post=0.25,
-             slope_post=-0.06).assign(block_index=3)
+    d = _sim(4000, 0.01, 10, change_point=4, generative_mean_post=0.01, bound_scale_post=0.25, slope_post=-0.06).assign(
+        block_index=3
+    )
     truth = {**TRUE, "ndt_probs": NDT_PROBS, "bound_scale_post": 0.25, "slope_post": -0.06}
     nll_true = stopping_model_nll(d, truth, group_col="block_index")
     assert stopping_model_nll(d, {**truth, "slope_post": 0.0}, group_col="block_index") > nll_true
-    p = fit_stopping_model(d, post_params=("bound_scale", "slope"), time_course="flat",
-                           smooth_penalty=0.0)["params"].iloc[0]
+    p = fit_stopping_model(d, post_params=("bound_scale", "slope"), time_course="flat", smooth_penalty=0.0)[
+        "params"
+    ].iloc[0]
     assert abs(p["slope_post"] + 0.06) < 0.02
     assert abs(p["bound_scale_post"] - 0.25) < 0.04
 
 
 def test_fit_recovers_pre_change_point_slope_and_step():
     # Anticipatory tilt anchored at the change point plus a step there: both recovered together.
-    d = _sim(4000, 0.01, 11, change_point=10, generative_mean_post=0.03, bound_scale_post=0.14,
-             slope_pre=0.05).assign(block_index=3)
+    d = _sim(4000, 0.01, 11, change_point=10, generative_mean_post=0.03, bound_scale_post=0.14, slope_pre=0.05).assign(
+        block_index=3
+    )
     truth = {**TRUE, "ndt_probs": NDT_PROBS, "bound_scale_post": 0.14, "slope_pre": 0.05}
     nll_true = stopping_model_nll(d, truth, group_col="block_index")
     assert stopping_model_nll(d, {**truth, "slope_pre": 0.0}, group_col="block_index") > nll_true
-    p = fit_stopping_model(d, post_params=("bound_scale", "pre_slope"), time_course="flat",
-                           smooth_penalty=0.0)["params"].iloc[0]
+    p = fit_stopping_model(d, post_params=("bound_scale", "pre_slope"), time_course="flat", smooth_penalty=0.0)[
+        "params"
+    ].iloc[0]
     assert abs(p["slope_pre"] - 0.05) < 0.02
     assert abs(p["bound_scale"] - 0.2) < 0.025
     assert abs(p["bound_scale_post"] - 0.14) < 0.025
@@ -101,31 +121,46 @@ def test_fit_recovers_start_anchored_pre_slope_with_varied_change_points():
     # A tilt in elapsed steps (anchored at step 1) with change points from 4 to 13: the anchor matters only
     # when change points vary, and the matching anchor must fit better than the change-point anchor.
     cps = np.random.default_rng(12).integers(4, 14, 4000)
-    d = _sim(4000, 0.01, 12, change_point=cps, generative_mean_post=0.03, bound_scale_post=0.14,
-             slope_pre=0.04, pre_slope_anchor="start").assign(block_index=3)
+    d = _sim(
+        4000,
+        0.01,
+        12,
+        change_point=cps,
+        generative_mean_post=0.03,
+        bound_scale_post=0.14,
+        slope_pre=0.04,
+        pre_slope_anchor="start",
+    ).assign(block_index=3)
     truth = {**TRUE, "ndt_probs": NDT_PROBS, "bound_scale_post": 0.14, "slope_pre": 0.04}
-    nll = {a: stopping_model_nll(d, truth, group_col="block_index", pre_slope_anchor=a)
-           for a in ("start", "change_point")}
+    nll = {
+        a: stopping_model_nll(d, truth, group_col="block_index", pre_slope_anchor=a) for a in ("start", "change_point")
+    }
     assert nll["start"] < nll["change_point"]
-    p = fit_stopping_model(d, post_params=("bound_scale", "pre_slope"), time_course="flat", smooth_penalty=0.0,
-                           pre_slope_anchor="start")["params"].iloc[0]
+    p = fit_stopping_model(
+        d, post_params=("bound_scale", "pre_slope"), time_course="flat", smooth_penalty=0.0, pre_slope_anchor="start"
+    )["params"].iloc[0]
     assert abs(p["slope_pre"] - 0.04) < 0.015
     assert abs(p["bound_scale"] - 0.2) < 0.025
 
 
 def test_wall_hit_trials_are_censored_not_misfit():
     # Large steps: many trials reach the wall; the fit should still recover the bound.
-    d = simulate_stopping_trials(3000, 0.15, 0.3, 0.4, 0.35, guess_rate=0.02, ndt_probs=NDT_PROBS,
-                                 rng=np.random.default_rng(6))
+    d = simulate_stopping_trials(
+        3000, 0.15, 0.3, 0.4, 0.35, guess_rate=0.02, ndt_probs=NDT_PROBS, rng=np.random.default_rng(6)
+    )
     assert d["wall_hit"].mean() > 0.2
     r = fit_stopping_model(d, group_col=None, time_course="flat", fixed={"sensory_std": 0.0})
     assert abs(r["params"]["bound_scale"].iloc[0] - 0.4) < 0.04
 
 
 def test_groups_without_post_data_report_nan_post():
-    d = pd.concat([_sim(300, 0.01, 7).assign(block_index=1),
-                   _sim(300, 0.01, 8, change_point=6, generative_mean_post=0.03).assign(block_index=3)],
-                  ignore_index=True)
+    d = pd.concat(
+        [
+            _sim(300, 0.01, 7).assign(block_index=1),
+            _sim(300, 0.01, 8, change_point=6, generative_mean_post=0.03).assign(block_index=3),
+        ],
+        ignore_index=True,
+    )
     p = fit_stopping_model(d, post_params=("bound_scale",), time_course="flat")["params"].set_index("group")
     assert np.isnan(p.loc[1, "bound_scale_post"]) and np.isfinite(p.loc[3, "bound_scale_post"])
 
@@ -138,22 +173,27 @@ def test_fit_rejects_missing_choices():
 
 
 def test_shared_and_per_block_parameters():
-    d = pd.concat([_sim(400, 0.01, 10, bound_scale=0.25).assign(block_index=1),
-                   _sim(400, 0.03, 11, bound_scale=0.15).assign(block_index=2)], ignore_index=True)
+    d = pd.concat(
+        [
+            _sim(400, 0.01, 10, bound_scale=0.25).assign(block_index=1),
+            _sim(400, 0.03, 11, bound_scale=0.15).assign(block_index=2),
+        ],
+        ignore_index=True,
+    )
     # Default: all five group parameters per block; knee time course (3), noise, NDT shared.
     r = fit_stopping_model(d)
     assert r["params"]["guess_rate"].nunique() == 2
-    assert r["n_params"] == 2 * 5 + 3 + 1 + 1   # 5 per block; start, knee, late slope; noise; NDT
+    assert r["n_params"] == 2 * 5 + 3 + 1 + 1  # 5 per block; start, knee, late slope; noise; NDT
     # Sharing the three rates.
     r = fit_stopping_model(d, time_course="flat", shared_params=("guess_rate", "lapse_rate", "anticipation_rate"))
     p = r["params"]
     assert p["guess_rate"].nunique() == 1 and p["lapse_rate"].nunique() == 1
     assert p["bound_scale"].nunique() == 2
-    assert r["n_params"] == 2 * 2 + 3 + 1 + 1   # scale, cv per block; 3 rates; noise; NDT
+    assert r["n_params"] == 2 * 2 + 3 + 1 + 1  # scale, cv per block; 3 rates; noise; NDT
 
 
 def test_fit_recovers_guess_time_course_with_flat_bound():
-    early = np.array([1.5, 0.0, -0.5])   # logit-scale guess shift at KNOTS: more guessing early
+    early = np.array([1.5, 0.0, -0.5])  # logit-scale guess shift at KNOTS: more guessing early
     d = _sim(4000, 0.02, 12, log_g=early, guess_rate=0.04)
     truth = {**TRUE, "guess_rate": 0.04, "ndt_probs": NDT_PROBS, "log_g": early}
     nll_true = stopping_model_nll(d, truth, group_col=None)
@@ -167,7 +207,7 @@ def test_fit_recovers_guess_time_course_with_flat_bound():
 
 
 def test_fit_recovers_knee_time_course():
-    knee = (0.8, 3.5, -0.01)   # bound 2.2x higher at step 1, knee at step 3.5, slight late decline
+    knee = (0.8, 3.5, -0.01)  # bound 2.2x higher at step 1, knee at step 3.5, slight late decline
     d = _sim(4000, 0.02, 13, knee_shape=knee)
     truth = {**TRUE, "ndt_probs": NDT_PROBS, **dict(zip(("log_h_start", "knee", "late_slope"), knee))}
     nll_true = stopping_model_nll(d, truth, group_col=None)
@@ -179,9 +219,12 @@ def test_fit_recovers_knee_time_course():
     assert abs(p["log_h_start"] - knee[0]) < 0.3
     assert abs(p["bound_scale"] - TRUE["bound_scale"]) < 0.02
     steps = np.arange(1, 20)
-    assert np.allclose(bound_time_course(p, steps), TRUE["bound_scale"] * np.exp(
-        np.where(steps < knee[1], knee[0] * (knee[1] - steps) / (knee[1] - 1), knee[2] * (steps - knee[1]))),
-        atol=0.04)
+    assert np.allclose(
+        bound_time_course(p, steps),
+        TRUE["bound_scale"]
+        * np.exp(np.where(steps < knee[1], knee[0] * (knee[1] - steps) / (knee[1] - 1), knee[2] * (steps - knee[1]))),
+        atol=0.04,
+    )
 
 
 def test_knee_multi_start_keeps_the_best_start():
@@ -213,15 +256,26 @@ def test_fit_recovers_time_course_per_column_within_a_mixed_group():
     assert t.loc["lo", "log_h_start"] > t.loc["hi", "log_h_start"] + 0.4
     assert abs(t.loc["lo", "knee"] - 4.0) < 1.2
     with pytest.raises(ValueError):
-        get_commit_type_probabilities(d.assign(subject_index=1), r["params"].assign(subject_index=1),
-                                      group_col="condition")
+        get_commit_type_probabilities(
+            d.assign(subject_index=1), r["params"].assign(subject_index=1), group_col="condition"
+        )
 
 
 def test_commit_type_probabilities_are_calibrated():
     d = _sim(6000, 0.02, 14, guess_rate=0.06, log_h=COLLAPSE).assign(subject_index=1, condition="B1")
-    fit = pd.DataFrame([{"subject_index": 1, "group": "B1", **TRUE, "guess_rate": 0.06,
-                         "ndt_p1": NDT_PROBS[0], "ndt_p2": NDT_PROBS[1],
-                         **{f"log_h_k{k}": v for k, v in zip(KNOTS, COLLAPSE)}}])
+    fit = pd.DataFrame(
+        [
+            {
+                "subject_index": 1,
+                "group": "B1",
+                **TRUE,
+                "guess_rate": 0.06,
+                "ndt_p1": NDT_PROBS[0],
+                "ndt_p2": NDT_PROBS[1],
+                **{f"log_h_k{k}": v for k, v in zip(KNOTS, COLLAPSE)},
+            }
+        ]
+    )
     pg = get_commit_type_probabilities(d, fit)
     ok = pg.notna()
     is_guess = d.commit_type.isin(["guess", "anticipation"])
@@ -237,8 +291,18 @@ def test_plateau_at_limit_flags_both_limits():
 
 def test_choice_probabilities_are_calibrated():
     d = _sim(20000, 0.03, 18, log_h=COLLAPSE).assign(subject_index=1, condition="B1")  # bins need n >= ~150
-    fit = pd.DataFrame([{"subject_index": 1, "group": "B1", **TRUE, "ndt_p1": NDT_PROBS[0], "ndt_p2": NDT_PROBS[1],
-                         **{f"log_h_k{k}": v for k, v in zip(KNOTS, COLLAPSE)}}])
+    fit = pd.DataFrame(
+        [
+            {
+                "subject_index": 1,
+                "group": "B1",
+                **TRUE,
+                "ndt_p1": NDT_PROBS[0],
+                "ndt_p2": NDT_PROBS[1],
+                **{f"log_h_k{k}": v for k, v in zip(KNOTS, COLLAPSE)},
+            }
+        ]
+    )
     pr = get_choice_probabilities(d, fit)
     assert pr.between(0, 1).all()
     # Calibrated: within bins of predicted P(right), the observed fraction of right choices matches.
@@ -252,22 +316,34 @@ def test_choice_probabilities_are_calibrated():
 def test_true_crossed_flags_noise_triggered_commits():
     exact = _sim(3000, 0.02, 19, sensory_std=0.0, guess_rate=0.0)
     lb = exact.commit_type == "bound"
-    assert exact.loc[lb, "true_crossed"].all()            # no noise: every bound commit is a true crossing
+    assert exact.loc[lb, "true_crossed"].all()  # no noise: every bound commit is a true crossing
     noisy = _sim(3000, 0.02, 19, sensory_std=0.1, guess_rate=0.0)
     lb = noisy.commit_type == "bound"
-    assert 0.05 < 1 - noisy.loc[lb, "true_crossed"].mean() < 0.95   # noise triggers some commits early
+    assert 0.05 < 1 - noisy.loc[lb, "true_crossed"].mean() < 0.95  # noise triggers some commits early
     assert not noisy.loc[noisy.commit_type == "anticipation", "true_crossed"].any()
 
 
 def test_commit_sources_priority():
     up = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
-    t = pd.DataFrame({"commit_type": ["guess", "bound", "bound", "bound", "bound", "bound", "anticipation"],
-                      "lapse": [True, True, False, False, False, False, False],
-                      "DT": [3, 3, 4, 3, 3, 3, 0], "commit_step": [3, 3, 3, 3, 3, 3, 0],
-                      "true_crossed": [False, True, True, False, True, True, False],
-                      "steps": [up, up, up, up, [0, 0.1, 0.2, -0.1, -0.2, -0.3], up, [0]]})
-    assert get_commit_sources(t).tolist() == ["guess", "lapse", "timing", "sensory noise", "measurement",
-                                              "collapsing bound", "guess"]
+    t = pd.DataFrame(
+        {
+            "commit_type": ["guess", "bound", "bound", "bound", "bound", "bound", "anticipation"],
+            "lapse": [True, True, False, False, False, False, False],
+            "DT": [3, 3, 4, 3, 3, 3, 0],
+            "commit_step": [3, 3, 3, 3, 3, 3, 0],
+            "true_crossed": [False, True, True, False, True, True, False],
+            "steps": [up, up, up, up, [0, 0.1, 0.2, -0.1, -0.2, -0.3], up, [0]],
+        }
+    )
+    assert get_commit_sources(t).tolist() == [
+        "guess",
+        "lapse",
+        "timing",
+        "sensory noise",
+        "measurement",
+        "collapsing bound",
+        "guess",
+    ]
 
 
 def test_fit_with_fixed_shape_noise_and_ndt():
@@ -276,16 +352,24 @@ def test_fit_with_fixed_shape_noise_and_ndt():
     fixed = {"log_h_start": knee[0], "knee": knee[1], "sensory_std": TRUE["sensory_std"], "ndt_probs": NDT_PROBS}
     r = fit_stopping_model(d, group_col=None, fixed=fixed)
     p = r["params"].iloc[0]
-    assert r["success"] and r["n_params"] == 5 + 1          # five group parameters + the late slope
+    assert r["success"] and r["n_params"] == 5 + 1  # five group parameters + the late slope
     assert np.isclose(p["ndt_p1"], NDT_PROBS[0]) and np.isclose(p["knee"], knee[1])
     assert abs(p["late_slope"] - knee[2]) < 0.02
     r0 = fit_stopping_model(d, group_col=None, fixed={**fixed, "late_slope": 0.0})
-    assert r0["nll"] > r["nll"] + 2                        # a flat late segment fits worse
+    assert r0["nll"] > r["nll"] + 2  # a flat late segment fits worse
 
 
 def test_simulated_data_table_keeps_trial_order():
-    d = pd.DataFrame({"subject_index": 1, "condition": "B1", "block_index": 1, "snr": 0.2, "step_std": 0.1,
-                      "trial_number": [12, 10, 11, 15]})
+    d = pd.DataFrame(
+        {
+            "subject_index": 1,
+            "condition": "B1",
+            "block_index": 1,
+            "snr": 0.2,
+            "step_std": 0.1,
+            "trial_number": [12, 10, 11, 15],
+        }
+    )
     fit = pd.DataFrame([{"subject_index": 1, "group": "B1", **TRUE, "ndt_p1": NDT_PROBS[0], "ndt_p2": NDT_PROBS[1]}])
     s = simulate_stopping_data_table(d, fit, group_col="condition", num_reps=2, rng=np.random.default_rng(0))
     assert s.trial_number.tolist() == [12, 10, 11, 15] * 2 and s.rep.tolist() == [0] * 4 + [1] * 4

@@ -45,10 +45,19 @@ def job(args):
         return {**row, "error": repr(err)}
     p = alt["params"].iloc[0]
     lr = max(2 * (null["nll"] - alt["nll"]), 0.0)
-    return {**row, "late_slope": p["late_slope"], "bound_scale": p["bound_scale"],
-            "bound_scale_null": null["params"].iloc[0]["bound_scale"],
-            "nll_alt": alt["nll"], "nll_null": null["nll"], "lr_stat": lr, "p_value": scipy.stats.chi2.sf(lr, 1),
-            "success_alt": alt["success"], "success_null": null["success"], "error": None}
+    return {
+        **row,
+        "late_slope": p["late_slope"],
+        "bound_scale": p["bound_scale"],
+        "bound_scale_null": null["params"].iloc[0]["bound_scale"],
+        "nll_alt": alt["nll"],
+        "nll_null": null["nll"],
+        "lr_stat": lr,
+        "p_value": scipy.stats.chi2.sf(lr, 1),
+        "success_alt": alt["success"],
+        "success_null": null["success"],
+        "error": None,
+    }
 
 
 def main():
@@ -62,8 +71,12 @@ def main():
         f_task = fits[fits.task == task].groupby("subject_index").first()
         for (subject, condition), d in d_task.groupby(["subject_index", "condition"]):
             f = f_task.loc[subject]
-            fixed = {"log_h_start": f.log_h_start, "knee": f.knee, "sensory_std": f.sensory_std,
-                     "ndt_probs": [f.ndt_p1, f.ndt_p2]}
+            fixed = {
+                "log_h_start": f.log_h_start,
+                "knee": f.knee,
+                "sensory_std": f.sensory_std,
+                "ndt_probs": [f.ndt_p1, f.ndt_p2],
+            }
             jobs.append((task, subject, condition, d, fixed))
     log(f"{len(jobs)} subject x condition fits (x2: alternative and null)")
     t0 = time.time()
@@ -71,9 +84,11 @@ def main():
         rows = list(pool.map(job, jobs, chunksize=4))
     out = pd.DataFrame(rows)
     out.to_pickle(OUT)
-    log(f"done in {(time.time() - t0) / 60:.1f} min; {int(out.error.notna().sum())} raised; "
+    log(
+        f"done in {(time.time() - t0) / 60:.1f} min; {int(out.error.notna().sum())} raised; "
         f"not converged: alt {int((out.success_alt == False).sum())}, null {int((out.success_null == False).sum())}; "  # noqa: E712
-        f"wrote {OUT}")
+        f"wrote {OUT}"
+    )
 
 
 if __name__ == "__main__":

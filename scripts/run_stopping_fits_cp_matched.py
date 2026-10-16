@@ -44,7 +44,7 @@ from pigeon.stopping import KNEE_PARAMS, NDT_VALUES, fit_stopping_models, get_st
 OUT_DIR = Path("data/processed")
 BLOCKS = [1, 2, 3, 4]
 BASE = "cp_plateau_pair"
-MATCHED_CP_BLOCK = {1: 3, 2: 4}   # fixed block -> change-point block with the same starting SNR
+MATCHED_CP_BLOCK = {1: 3, 2: 4}  # fixed block -> change-point block with the same starting SNR
 FROZEN = ("bound_cv", "guess_rate", "lapse_rate", "anticipation_rate")
 
 
@@ -88,11 +88,19 @@ def main():
     d = add_pseudo_change_points(d)
     subject_kwargs = {s: {"fixed": frozen_params(rows)} for s, rows in base.groupby("subject_index")}
     t0 = time.time()
-    f = fit_stopping_models(d, group_col="condition", time_course_col="pair", subject_kwargs=subject_kwargs,
-                            post_params=("bound_scale", "pre_slope"), pre_slope_anchor="change_point",
-                            smooth_penalty=0.0).assign(task="MXSC", variant="cp_matched")
+    f = fit_stopping_models(
+        d,
+        group_col="condition",
+        time_course_col="pair",
+        subject_kwargs=subject_kwargs,
+        post_params=("bound_scale", "pre_slope"),
+        pre_slope_anchor="change_point",
+        smooth_penalty=0.0,
+    ).assign(task="MXSC", variant="cp_matched")
     n_bad = int((~f.groupby("subject_index").success.first()).sum())
-    log(f"cp_matched: {f.subject_index.nunique()} subjects in {(time.time() - t0) / 60:.1f} min; {n_bad} did not converge")
+    log(
+        f"cp_matched: {f.subject_index.nunique()} subjects in {(time.time() - t0) / 60:.1f} min; {n_bad} did not converge"
+    )
     out = OUT_DIR / "stopping_fits_cp_matched.pkl"
     f.to_pickle(out)
     log(f"wrote {out}")

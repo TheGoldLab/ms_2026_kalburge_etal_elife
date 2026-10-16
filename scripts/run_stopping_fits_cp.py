@@ -53,8 +53,10 @@ def main(variants):
     d = get_stopping_model_trials("MXSC", BLOCKS)
     n_blocks = d.groupby("subject_index")["block_index"].nunique()
     l_complete = d["subject_index"].isin(n_blocks.index[n_blocks == len(BLOCKS)])
-    log(f"{l_complete.groupby(d['subject_index']).first().sum()} subjects with all {len(BLOCKS)} blocks; "
-        f"{(~l_complete.groupby(d['subject_index']).first()).sum()} subjects without them not fit")
+    log(
+        f"{l_complete.groupby(d['subject_index']).first().sum()} subjects with all {len(BLOCKS)} blocks; "
+        f"{(~l_complete.groupby(d['subject_index']).first()).sum()} subjects without them not fit"
+    )
     d = d[l_complete].copy()
     # Blocks 1 (fixed low) and 3 (LowHigh) start at low SNR; 2 (fixed high) and 4 (HighLow) at high SNR.
     d["pair"] = np.where(d["block_index"].isin([1, 3]), "low", "high")
@@ -62,8 +64,10 @@ def main(variants):
         t0 = time.time()
         f = fit_stopping_models(d, group_col="condition", **VARIANTS[variant]).assign(task="MXSC", variant=variant)
         n_bad = int((~f.groupby("subject_index").success.first()).sum())
-        log(f"{variant}: {f.subject_index.nunique()} subjects in {(time.time() - t0) / 60:.1f} min; "
-            f"{n_bad} did not converge")
+        log(
+            f"{variant}: {f.subject_index.nunique()} subjects in {(time.time() - t0) / 60:.1f} min; "
+            f"{n_bad} did not converge"
+        )
         out = OUT_DIR / f"stopping_fits_{variant}.pkl"
         f.to_pickle(out)
         log(f"wrote {out}")

@@ -55,11 +55,26 @@ get_stopping_model_trials Trials for stopping-model fits (the paper's trial sele
 from .data import get_data_table, get_bounds, get_good_trial_array, get_bound_summary, get_performance_summary
 from .simulation import simulate_trials, get_simulated_data_table
 from .adaptation import get_adaptation_tau_fits
-from .stopping import (fit_stopping_model, fit_stopping_models, simulate_stopping_trials, stopping_model_nll,
-                       get_stopping_model_trials)
+from .stopping import (
+    fit_stopping_model,
+    fit_stopping_models,
+    simulate_stopping_trials,
+    stopping_model_nll,
+    get_stopping_model_trials,
+)
 
 __all__ = [
-    "get_data_table", "get_bounds", "get_good_trial_array", "get_bound_summary", "get_performance_summary",
-    "simulate_trials", "get_simulated_data_table", "get_adaptation_tau_fits", "fit_stopping_model",
-    "fit_stopping_models", "simulate_stopping_trials", "stopping_model_nll", "get_stopping_model_trials",
+    "get_data_table",
+    "get_bounds",
+    "get_good_trial_array",
+    "get_bound_summary",
+    "get_performance_summary",
+    "simulate_trials",
+    "get_simulated_data_table",
+    "get_adaptation_tau_fits",
+    "fit_stopping_model",
+    "fit_stopping_models",
+    "simulate_stopping_trials",
+    "stopping_model_nll",
+    "get_stopping_model_trials",
 ]

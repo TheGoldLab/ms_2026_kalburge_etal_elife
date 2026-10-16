@@ -95,7 +95,9 @@ def fit_exp_tau(trial_nums, z_vals, tau_max, min_valid=8):
     C0 = float(np.nanmedian(y[-5:]))
     try:
         popt, _ = curve_fit(
-            _exp_decay, t, y,
+            _exp_decay,
+            t,
+            y,
             p0=[A0, 10.0, C0],
             bounds=([-np.inf, 0.5, -np.inf], [np.inf, tau_max, np.inf]),
             maxfev=5000,
@@ -106,10 +108,9 @@ def fit_exp_tau(trial_nums, z_vals, tau_max, min_valid=8):
         return np.nan, False
 
 
-def compute_per_subject_curves_with_nulls(data_table, max_trial, blocks,
-                                           half_win=3, min_win=3,
-                                           n_perm=1000, seed=123,
-                                           value_col='abs_bound', zscore=True):
+def compute_per_subject_curves_with_nulls(
+    data_table, max_trial, blocks, half_win=3, min_win=3, n_perm=1000, seed=123, value_col="abs_bound", zscore=True
+):
     """
     For every subject x block, computes the real smoothed z-scored bound curve plus
     a bank of permutation-null curves (trial order shuffled within that subject's own
@@ -150,7 +151,7 @@ def compute_per_subject_curves_with_nulls(data_table, max_trial, blocks,
     perm_curves : (n_perm, n_subjects, max_trial, n_blocks)
     subjects    : list of subject indices
     """
-    subjects = sorted(data_table['subject_index'].dropna().unique())
+    subjects = sorted(data_table["subject_index"].dropna().unique())
     trial_nums = np.arange(1, max_trial + 1)
     rng = np.random.default_rng(seed)
 
@@ -163,12 +164,11 @@ def compute_per_subject_curves_with_nulls(data_table, max_trial, blocks,
         # *is* the x-axis of the curve being fit here, so a floor of 10 would
         # remove the first 9 trials of every block and make it impossible to see
         # the early-trial settling dynamics this curve exists to characterize.
-        lg = get_good_trial_array(
-            data_table, min_trial_number=None, block_index=block)
+        lg = get_good_trial_array(data_table, min_trial_number=None, block_index=block)
         block_data = data_table[lg]
 
         for si, subj in enumerate(subjects):
-            sd = block_data[block_data['subject_index'] == subj]
+            sd = block_data[block_data["subject_index"] == subj]
             sd = sd[np.isfinite(sd[value_col].to_numpy(float))]
             if sd.shape[0] < 2:
                 continue
@@ -180,7 +180,7 @@ def compute_per_subject_curves_with_nulls(data_table, max_trial, blocks,
                 z = (sd[value_col].to_numpy(float) - mu) / sigma
             else:
                 z = sd[value_col].to_numpy(float)
-            t_vals = sd['trial_number'].values
+            t_vals = sd["trial_number"].values
 
             W, lvalid = _build_window_matrix(t_vals, trial_nums, half_win, min_win)
 
@@ -217,8 +217,8 @@ def per_subject_significance(real_curves, perm_curves, alpha=0.05):
     sig   : (n_subjects, n_blocks) bool array
     """
     lhas_data = np.any(np.isfinite(real_curves), axis=1)
-    obs_stat = np.nansum(real_curves ** 2, axis=1)
-    perm_stat = np.nansum(perm_curves ** 2, axis=2)
+    obs_stat = np.nansum(real_curves**2, axis=1)
+    perm_stat = np.nansum(perm_curves**2, axis=2)
     counts = np.sum(perm_stat >= obs_stat[None, :, :], axis=0)
     pvals = (1 + counts) / (1 + perm_stat.shape[0])
     pvals = np.where(lhas_data, pvals, np.nan)
@@ -246,8 +246,8 @@ def group_null_band(perm_curves, alpha=0.05):
     np.ndarray, shape (n_blocks,)
         Per-block max-stat threshold.
     """
-    group_null = np.nanmean(perm_curves, axis=1)        # (n_perm, max_trial, n_blocks)
-    max_stat = np.nanmax(np.abs(group_null), axis=1)    # (n_perm, n_blocks)
+    group_null = np.nanmean(perm_curves, axis=1)  # (n_perm, max_trial, n_blocks)
+    max_stat = np.nanmax(np.abs(group_null), axis=1)  # (n_perm, n_blocks)
     return np.percentile(max_stat, 100 * (1 - alpha), axis=0)
 
 
@@ -276,7 +276,7 @@ def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
     pvals : (n_subjects, n_blocks) -- column 0 is NaN (no preceding block to compare)
     sig   : (n_subjects, n_blocks) bool -- column 0 is always False
     """
-    subjects = sorted(data_table['subject_index'].dropna().unique())
+    subjects = sorted(data_table["subject_index"].dropna().unique())
     n_subjects = len(subjects)
     n_blocks = len(blocks)
     pvals = np.full((n_subjects, n_blocks), np.nan)
@@ -289,13 +289,13 @@ def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
         lg_cur = lg_by_block[blocks[bi]]
 
         for si, subj in enumerate(subjects):
-            subj_mask = data_table['subject_index'] == subj
-            x_prev = data_table.loc[subj_mask & lg_prev, 'abs_bound'].dropna().to_numpy()
-            x_cur = data_table.loc[subj_mask & lg_cur, 'abs_bound'].dropna().to_numpy()
+            subj_mask = data_table["subject_index"] == subj
+            x_prev = data_table.loc[subj_mask & lg_prev, "abs_bound"].dropna().to_numpy()
+            x_cur = data_table.loc[subj_mask & lg_cur, "abs_bound"].dropna().to_numpy()
             if len(x_prev) < min_trials or len(x_cur) < min_trials:
                 continue
             try:
-                _, p = scipy.stats.mannwhitneyu(x_prev, x_cur, alternative='two-sided')
+                _, p = scipy.stats.mannwhitneyu(x_prev, x_cur, alternative="two-sided")
             except ValueError:
                 continue
             pvals[si, bi] = p
@@ -304,10 +304,19 @@ def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
     return pvals, lsig
 
 
-def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
-                            half_win=3, min_win=3, n_perm=1000, seed=123,
-                            alpha=0.05, between_min_trials=5,
-                            value_col='abs_bound', zscore=True):
+def get_adaptation_tau_fits(
+    data_table,
+    blocks=(1, 2, 3),
+    max_trial=40,
+    half_win=3,
+    min_win=3,
+    n_perm=1000,
+    seed=123,
+    alpha=0.05,
+    between_min_trials=5,
+    value_col="abs_bound",
+    zscore=True,
+):
     """
     Fit within-block adaptation time constants (tau) per subject per block.
 
@@ -371,12 +380,19 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
     """
     blocks = list(blocks)
     trial_nums, real_curves, perm_curves, subjects = compute_per_subject_curves_with_nulls(
-        data_table, max_trial, blocks, half_win=half_win, min_win=min_win,
-        n_perm=n_perm, seed=seed, value_col=value_col, zscore=zscore)
+        data_table,
+        max_trial,
+        blocks,
+        half_win=half_win,
+        min_win=min_win,
+        n_perm=n_perm,
+        seed=seed,
+        value_col=value_col,
+        zscore=zscore,
+    )
 
     _, sig_within = per_subject_significance(real_curves, perm_curves, alpha=alpha)
-    _, sig_between = between_block_significance(
-        data_table, blocks, alpha=alpha, min_trials=between_min_trials)
+    _, sig_between = between_block_significance(data_table, blocks, alpha=alpha, min_trials=between_min_trials)
 
     # lhas_curve: does this subject/block have at least one finite curve point to
     # fit at all? Block 0's sig_within is already implicitly gated by this (see
@@ -396,11 +412,19 @@ def get_adaptation_tau_fits(data_table, blocks=(1, 2, 3), max_trial=40,
                 lcensored[si, bi] = cens
 
     lgood = np.isfinite(taus) & ~lcensored
-    good_tau = pd.DataFrame(
-        np.where(lgood, taus, np.nan), index=subjects, columns=blocks)
+    good_tau = pd.DataFrame(np.where(lgood, taus, np.nan), index=subjects, columns=blocks)
 
-    return dict(subjects=subjects, trial_nums=trial_nums, real_curves=real_curves, perm_curves=perm_curves,
-                sig_within=sig_within, sig_tau=sig_tau, taus=taus, censored=lcensored, good_tau=good_tau)
+    return dict(
+        subjects=subjects,
+        trial_nums=trial_nums,
+        real_curves=real_curves,
+        perm_curves=perm_curves,
+        sig_within=sig_within,
+        sig_tau=sig_tau,
+        taus=taus,
+        censored=lcensored,
+        good_tau=good_tau,
+    )
 
 
 def get_tau_exclusion_mask(data_table, good_tau):
@@ -431,8 +455,9 @@ def get_tau_exclusion_mask(data_table, good_tau):
     return pd.Series(~drop, index=data_table.index)
 
 
-def get_sequential_bound_stats(data_table, group_cols=("subject_index", "block_index"), value_col="abs_bound",
-                               min_trials=20):
+def get_sequential_bound_stats(
+    data_table, group_cols=("subject_index", "block_index"), value_col="abs_bound", min_trials=20
+):
     """
     Trial-to-trial structure of the bound within each sequence of trials.
 
@@ -477,13 +502,17 @@ def get_sequential_bound_stats(data_table, group_cols=("subject_index", "block_i
             stats["lag1_r"] = np.corrcoef(prev, nxt)[0, 1]
         rows[key] = stats
     out = pd.DataFrame.from_dict(rows, orient="index")
-    out.index = pd.MultiIndex.from_tuples(out.index, names=list(group_cols)) if len(group_cols) > 1 \
+    out.index = (
+        pd.MultiIndex.from_tuples(out.index, names=list(group_cols))
+        if len(group_cols) > 1
         else pd.Index(out.index, name=group_cols[0])
+    )
     return out
 
 
-def get_post_error_bound_effect(data_table, group_cols=("subject_index", "block_index"), value_col="abs_bound",
-                                min_post_error=3, min_trials=10):
+def get_post_error_bound_effect(
+    data_table, group_cols=("subject_index", "block_index"), value_col="abs_bound", min_post_error=3, min_trials=10
+):
     """
     Relative change in the bound on the trial after an error.
 
@@ -538,15 +567,26 @@ def get_post_error_bound_effect(data_table, group_cols=("subject_index", "block_
         limp = ~np.isfinite(prev_c)
         prev_c[limp] = 0.0
         err = prev_err[lu]
-        stats = {"n_trials": int(lu.sum()), "n_post_error": int(err.sum()), "n_prev_imputed": int(limp.sum()),
-                 "post_error_effect": np.nan, "prev_coef": np.nan}
-        if stats["n_trials"] >= min_trials and stats["n_post_error"] >= min_post_error \
-                and stats["n_post_error"] < stats["n_trials"]:
+        stats = {
+            "n_trials": int(lu.sum()),
+            "n_post_error": int(err.sum()),
+            "n_prev_imputed": int(limp.sum()),
+            "post_error_effect": np.nan,
+            "prev_coef": np.nan,
+        }
+        if (
+            stats["n_trials"] >= min_trials
+            and stats["n_post_error"] >= min_post_error
+            and stats["n_post_error"] < stats["n_trials"]
+        ):
             X = np.column_stack([np.ones(len(err)), err, prev_c])
             b = np.linalg.lstsq(X, v[lu], rcond=None)[0]
             stats["post_error_effect"], stats["prev_coef"] = b[1], b[2]
         rows[key] = stats
     out = pd.DataFrame.from_dict(rows, orient="index")
-    out.index = pd.MultiIndex.from_tuples(out.index, names=list(group_cols)) if len(group_cols) > 1 \
+    out.index = (
+        pd.MultiIndex.from_tuples(out.index, names=list(group_cols))
+        if len(group_cols) > 1
         else pd.Index(out.index, name=group_cols[0])
+    )
     return out

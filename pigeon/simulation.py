@@ -53,9 +53,19 @@ BLOCK_DEFAULTS = {
 BLOCK_DEFAULTS_PD = {block: dict(rules, steps_per_block=800) for block, rules in BLOCK_DEFAULTS.items()}
 
 
-def simulate_trials(generative_mean=0.05, generative_std=0.15, num_trials=1_000_000, max_steps=50,
-                    bound_mean=0.0, bound_std=0.0, ndt_min=1, ndt_max=1, ndt_probs=None, rng=None,
-                    return_steps=True):
+def simulate_trials(
+    generative_mean=0.05,
+    generative_std=0.15,
+    num_trials=1_000_000,
+    max_steps=50,
+    bound_mean=0.0,
+    bound_std=0.0,
+    ndt_min=1,
+    ndt_max=1,
+    ndt_probs=None,
+    rng=None,
+    return_steps=True,
+):
     """
     Simulate fixed-bound trials (core engine).
     Translated from getPigeon_simulatedData.m.
@@ -113,8 +123,9 @@ def simulate_trials(generative_mean=0.05, generative_std=0.15, num_trials=1_000_
     DV = np.concatenate([np.zeros((num_trials, 1)), np.cumsum(noise, axis=1)], axis=1)
 
     bound_mean = np.atleast_1d(np.asarray(bound_mean, dtype=float))
-    bound_per_trial = bound_mean[i_means] if len(bound_mean) == n_means and n_means > 1 \
-        else np.full(num_trials, bound_mean[0])
+    bound_per_trial = (
+        bound_mean[i_means] if len(bound_mean) == n_means and n_means > 1 else np.full(num_trials, bound_mean[0])
+    )
     if bound_std > 0:
         bound_per_trial = np.maximum(MIN_BOUND, rng.normal(bound_per_trial, bound_std))
 
@@ -151,13 +162,25 @@ def simulate_trials(generative_mean=0.05, generative_std=0.15, num_trials=1_000_
         choices[ss0] = rng.integers(0, 2, size=n_ss0).astype(float)
         bounds_out[ss0] = bound_per_trial[ss0]
 
-    steps = [DV[tt, :rts[tt]] for tt in range(num_trials)] if return_steps else None
+    steps = [DV[tt, : rts[tt]] for tt in range(num_trials)] if return_steps else None
     return choices, rts, DV, bounds_out, ndts, trial_means / generative_std, steps
 
 
-def get_simulated_data_table(specs, generative_mean=0.05, generative_std=0.15, num_trials=600, max_steps=50,
-                             bound_mean=0.0, bound_std=0.0, ndt_min=1, ndt_max=1, ndt_probs=None, correct_bias=None,
-                             rng=None, block_defaults=BLOCK_DEFAULTS):
+def get_simulated_data_table(
+    specs,
+    generative_mean=0.05,
+    generative_std=0.15,
+    num_trials=600,
+    max_steps=50,
+    bound_mean=0.0,
+    bound_std=0.0,
+    ndt_min=1,
+    ndt_max=1,
+    ndt_probs=None,
+    correct_bias=None,
+    rng=None,
+    block_defaults=BLOCK_DEFAULTS,
+):
     """
     Simulate whole blocks of fixed-bound trials in the format of get_data_table().
     Translated from getPigeon_simulatedDataTable.m.
@@ -192,49 +215,62 @@ def get_simulated_data_table(specs, generative_mean=0.05, generative_std=0.15, n
     """
     if rng is None:
         rng = np.random.default_rng()
-    blocks = np.atleast_1d(np.asarray(specs.get('blocks', [1]), dtype=int))
-    subjects = np.arange(1, int(specs.get('num_subjects', 1)) + 1)
+    blocks = np.atleast_1d(np.asarray(specs.get("blocks", [1]), dtype=int))
+    subjects = np.arange(1, int(specs.get("num_subjects", 1)) + 1)
 
     dfs = []
     for subj in subjects:
         for block in blocks:
             rules = block_defaults[int(block)]
             choices, rts, _, _, _, snrs, steps = simulate_trials(
-                generative_mean=generative_mean, generative_std=generative_std, num_trials=num_trials,
-                max_steps=max_steps, bound_mean=bound_mean, bound_std=bound_std, ndt_min=ndt_min,
-                ndt_max=ndt_max, ndt_probs=ndt_probs, rng=rng)
+                generative_mean=generative_mean,
+                generative_std=generative_std,
+                num_trials=num_trials,
+                max_steps=max_steps,
+                bound_mean=bound_mean,
+                bound_std=bound_std,
+                ndt_min=ndt_min,
+                ndt_max=ndt_max,
+                ndt_probs=ndt_probs,
+                rng=rng,
+            )
 
             # Cumulative steps and coins; stop when the step budget is reached
-            step_counts = np.cumsum(rts + rules['steps_lost'] * (choices == 0))
-            coin_counts = np.cumsum(-rules['coins_lost'] * (choices == 0) + rules['coins_gained'] * (choices == 1))
-            n = min(int(np.searchsorted(step_counts, rules['steps_per_block'])) + 1, len(choices))
+            step_counts = np.cumsum(rts + rules["steps_lost"] * (choices == 0))
+            coin_counts = np.cumsum(-rules["coins_lost"] * (choices == 0) + rules["coins_gained"] * (choices == 1))
+            n = min(int(np.searchsorted(step_counts, rules["steps_per_block"])) + 1, len(choices))
             # The last trial gets no choice (and no coins) if the budget ran out during it
-            if n > 0 and step_counts[n - 1] > rules['steps_per_block']:
+            if n > 0 and step_counts[n - 1] > rules["steps_per_block"]:
                 choices[n - 1] = np.nan
                 if n > 1:
                     coin_counts[n - 1] = coin_counts[n - 2]
 
             bound_arr, dt_arr, rt_arr, _, rt_cutoff_arr = get_bounds(
-                steps[:n], choices[:n], snr=np.abs(snrs[:n]), block_ids=np.full(n, int(block)))
-            dfs.append(pd.DataFrame({
-                'subject_index': int(subj),
-                'block_index': int(block),
-                'trial_number': np.arange(1, n + 1),
-                'bound': bound_arr,
-                'RT': rt_arr,
-                'DT': dt_arr,
-                'choice': choices[:n],
-                'correct': choices[:n],   # right is always correct in the simulation
-                'coin_count': coin_counts[:n],
-                'snr': snrs[:n],
-                'steps': steps[:n],
-                'rt_cutoff': rt_cutoff_arr,
-                'rt_below_cutoff': rt_arr < rt_cutoff_arr,
-            }))
+                steps[:n], choices[:n], snr=np.abs(snrs[:n]), block_ids=np.full(n, int(block))
+            )
+            dfs.append(
+                pd.DataFrame(
+                    {
+                        "subject_index": int(subj),
+                        "block_index": int(block),
+                        "trial_number": np.arange(1, n + 1),
+                        "bound": bound_arr,
+                        "RT": rt_arr,
+                        "DT": dt_arr,
+                        "choice": choices[:n],
+                        "correct": choices[:n],  # right is always correct in the simulation
+                        "coin_count": coin_counts[:n],
+                        "snr": snrs[:n],
+                        "steps": steps[:n],
+                        "rt_cutoff": rt_cutoff_arr,
+                        "rt_below_cutoff": rt_arr < rt_cutoff_arr,
+                    }
+                )
+            )
 
     sim_table = pd.concat(dfs, ignore_index=True)
-    sim_table['abs_bound'] = np.abs(sim_table['bound'])
-    sim_table['wall_hit'] = sim_table['steps'].apply(lambda s: len(s) > 0 and bool(np.any(np.abs(s) >= WALL - 1e-9)))
+    sim_table["abs_bound"] = np.abs(sim_table["bound"])
+    sim_table["wall_hit"] = sim_table["steps"].apply(lambda s: len(s) > 0 and bool(np.any(np.abs(s) >= WALL - 1e-9)))
     if correct_bias and os.path.exists(correct_bias):
         sim_table = apply_bias_corrections(sim_table, correct_bias)
     return sim_table

@@ -39,8 +39,10 @@ from pigeon.stopping import KNEE_PARAMS, get_stopping_model_trials, simulate_sto
 OUT_DIR = Path("data/processed")
 BASE = "cp_plateau_pair"
 # condition: (group, block, pre-change generative mean, post-change generative mean, slope grid)
-DESIGNS = {"LowHigh": ("B3", 3, 0.01, 0.03, np.round(np.linspace(-0.1, 0.6, 29), 4)),
-           "HighLow": ("B4", 4, 0.03, 0.01, np.round(np.linspace(-0.6, 0.1, 29), 4))}
+DESIGNS = {
+    "LowHigh": ("B3", 3, 0.01, 0.03, np.round(np.linspace(-0.1, 0.6, 29), 4)),
+    "HighLow": ("B4", 4, 0.03, 0.01, np.round(np.linspace(-0.6, 0.1, 29), 4)),
+}
 RATIOS = np.exp(np.linspace(np.log(0.1), np.log(10.0), 41))
 NUM_TRIALS, STEP_STD, MAX_STEPS = 40_000, 0.05, 50
 
@@ -51,10 +53,24 @@ def log(msg):
 
 def _reward_rate(f, cp, pre_mean, post_mean, bound_scale, bound_scale_post, slope, seed):
     sim = simulate_stopping_trials(
-        NUM_TRIALS, pre_mean, STEP_STD, bound_scale, f["bound_cv"], f["guess_rate"], f["lapse_rate"],
-        f["anticipation_rate"], f["sensory_std"], knee_shape=tuple(f[c] for c in KNEE_PARAMS),
-        ndt_probs=[f["ndt_p1"], f["ndt_p2"]], change_point=cp, generative_mean_post=post_mean,
-        bound_scale_post=bound_scale_post, slope_pre=slope, max_steps=MAX_STEPS, rng=np.random.default_rng(seed))
+        NUM_TRIALS,
+        pre_mean,
+        STEP_STD,
+        bound_scale,
+        f["bound_cv"],
+        f["guess_rate"],
+        f["lapse_rate"],
+        f["anticipation_rate"],
+        f["sensory_std"],
+        knee_shape=tuple(f[c] for c in KNEE_PARAMS),
+        ndt_probs=[f["ndt_p1"], f["ndt_p2"]],
+        change_point=cp,
+        generative_mean_post=post_mean,
+        bound_scale_post=bound_scale_post,
+        slope_pre=slope,
+        max_steps=MAX_STEPS,
+        rng=np.random.default_rng(seed),
+    )
     return 1000 * np.where(sim["correct"].to_numpy() == 1, 1.0, -1.0).mean() / sim["RT"].mean()
 
 
@@ -63,8 +79,11 @@ def _one_subject(args):
     _, _, pre, post, slopes = DESIGNS[cond]
     b = f["bound_scale"]
     step = [(subj, cond, r, _reward_rate(f, cp, pre, post, b, b * r, 0.0, seed)) for r in RATIOS]
-    slope = [(subj, cond, kind, s, _reward_rate(f, cp, pre, pm, b * np.exp(s * cp / 2), b, s, seed))
-             for kind, pm in (("cp", post), ("base", pre)) for s in slopes]
+    slope = [
+        (subj, cond, kind, s, _reward_rate(f, cp, pre, pm, b * np.exp(s * cp / 2), b, s, seed))
+        for kind, pm in (("cp", post), ("base", pre))
+        for s in slopes
+    ]
     return step, slope
 
 
@@ -79,7 +98,9 @@ def main():
         for _, f in fits[fits.group == grp].iterrows():
             key = (f["subject_index"], float(blk))
             if key in cps.index:
-                jobs.append((f["subject_index"], cond, f, int(cps.loc[key, "first"]), int(f["subject_index"]) * 10 + blk))
+                jobs.append(
+                    (f["subject_index"], cond, f, int(cps.loc[key, "first"]), int(f["subject_index"]) * 10 + blk)
+                )
     t0 = time.time()
     with ProcessPoolExecutor() as ex:
         res = list(ex.map(_one_subject, jobs))

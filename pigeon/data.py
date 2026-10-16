@@ -50,9 +50,15 @@ from .pathDefaults import RAW_DATA_DIR, BIAS_CORRECTION_FILE
 WALL = 0.75  # screen-edge limit; trials where any step position reaches |WALL| are flagged wall_hit = True
 
 
-def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
-                   combine_snr=True, correct_bias=BIAS_CORRECTION_FILE,
-                   max_ndt=5, peak_step_bound=True):
+def get_data_table(
+    task_type="MX",
+    data_dir=RAW_DATA_DIR,
+    blocks="all",
+    combine_snr=True,
+    correct_bias=BIAS_CORRECTION_FILE,
+    max_ndt=5,
+    peak_step_bound=True,
+):
     """
     Load and return a DataFrame of trial data.
     Translated from getPigeon_dataTable.m
@@ -121,15 +127,28 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
             orig_idx = raw.index[lg].tolist()
             orig_idx = [i for i in orig_idx if i + 1 < len(raw)]  # drop if no following row
             trial_rows = raw.loc[orig_idx].reset_index(drop=True)
-            next_rows  = raw.loc[[i + 1 for i in orig_idx]].reset_index(drop=True)
-            tmp = pd.concat([
-                trial_rows[["block_number", "trial_number", "predefined_bound", "correct",
-                            "step_mean_val", "step_std_val"]],
-                next_rows[["pigeon_steps", "choice", "coins_count"]],
-            ], axis=1)
+            next_rows = raw.loc[[i + 1 for i in orig_idx]].reset_index(drop=True)
+            tmp = pd.concat(
+                [
+                    trial_rows[
+                        ["block_number", "trial_number", "predefined_bound", "correct", "step_mean_val", "step_std_val"]
+                    ],
+                    next_rows[["pigeon_steps", "choice", "coins_count"]],
+                ],
+                axis=1,
+            )
         else:
-            cols = ["block_number", "trial_number", "pigeon_steps", "choice",
-                    "correct", "steps_count", "step_mean_val", "step_std_val", "coins_count"]
+            cols = [
+                "block_number",
+                "trial_number",
+                "pigeon_steps",
+                "choice",
+                "correct",
+                "steps_count",
+                "step_mean_val",
+                "step_std_val",
+                "coins_count",
+            ]
             if is_cp and "switch_time" in raw.columns:
                 cols.append("switch_time")
             tmp = raw.loc[lg, cols].reset_index(drop=True)
@@ -165,7 +184,7 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
         for tt in range(n_trials):
             steps_str = tmp["pigeon_steps"].iloc[tt]
             if isinstance(steps_str, str):
-                steps = np.array([float(x) for x in steps_str.strip('[]').split(',') if x.strip()], dtype=float)
+                steps = np.array([float(x) for x in steps_str.strip("[]").split(",") if x.strip()], dtype=float)
             else:
                 steps = np.array([], dtype=float)
             rows["steps"][tt] = steps
@@ -196,25 +215,28 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
                 switch_time = pd.to_numeric(tmp["switch_time"], errors="coerce").to_numpy(dtype=float)
                 rows["change_point"] = np.where(l_cp_block, switch_time, 0.0)
             elif l_cp_block.any():
-                raise ValueError(f"{os.path.basename(fpath)} has change-point blocks but no switch_time "
-                                 "column (a task version this loader does not support).")
+                raise ValueError(
+                    f"{os.path.basename(fpath)} has change-point blocks but no switch_time "
+                    "column (a task version this loader does not support)."
+                )
 
         if is_online:
             bounds, dts, rts, congruence, rt_cutoffs = get_bounds(
-                rows["steps"], rows["choice"],
+                rows["steps"],
+                rows["choice"],
                 snr=np.abs(rows["snr"]),
                 block_ids=rows["block_index"],
                 ndt=None,
                 max_ndt=max_ndt,
                 peak_step_bound=peak_step_bound,
             )
-            rows["bound"]      = bounds
-            rows["DT"]         = dts
-            rows["RT"]         = rts
+            rows["bound"] = bounds
+            rows["DT"] = dts
+            rows["RT"] = rts
             rows["congruence"] = [congruence] * n_trials
-            rows["rt_cutoff"]  = rt_cutoffs
+            rows["rt_cutoff"] = rt_cutoffs
         elif task_type == "PD":
-            rows["DT"] = rows["RT"].copy()   # no NDT: every step is deliberation time
+            rows["DT"] = rows["RT"].copy()  # no NDT: every step is deliberation time
 
         rows["abs_bound"] = np.abs(rows["bound"])
         all_tables.append(pd.DataFrame(rows))
@@ -228,12 +250,15 @@ def get_data_table(task_type="MX", data_dir=RAW_DATA_DIR, blocks="all",
     # On these trials the step logger kept recording after the wall was hit,
     # inflating RT and DT. The wall-hit step itself is the true end of the trial.
     data_table["wall_hit"] = data_table["steps"].apply(
-        lambda s: s is not None and len(s) > 0
-        and bool(np.any(np.abs(s[np.isfinite(s)]) >= WALL - 1e-9))
+        lambda s: s is not None and len(s) > 0 and bool(np.any(np.abs(s[np.isfinite(s)]) >= WALL - 1e-9))
     )
 
     # Relabel six blocks as three conditions (never for MXSC, whose four blocks are distinct conditions).
-    if combine_snr and not is_cp and sorted(data_table["block_index"].dropna().unique().astype(int)) == list(range(1, 7)):
+    if (
+        combine_snr
+        and not is_cp
+        and sorted(data_table["block_index"].dropna().unique().astype(int)) == list(range(1, 7))
+    ):
         block1_snrs = data_table.loc[data_table["block_index"] == 1, "snr"].dropna()
         if len(block1_snrs.abs().unique()) == 1:
             # blocked: remap blocks 4-6 -> 1-3
@@ -276,9 +301,9 @@ def _compute_rt_cutoff(bound_matrix, choices_pm, rts, threshold=0.65, min_trials
     int : minimum RT to include (exclude trials with RT < cutoff).
           Returns 1 if all RTs meet the threshold (no cutoff needed).
     """
-    max_ndt  = bound_matrix.shape[1]
-    rt_vals  = sorted(np.unique(rts[np.isfinite(rts)].astype(int)))
-    cutoff   = 1  # default: no cutoff needed
+    max_ndt = bound_matrix.shape[1]
+    rt_vals = sorted(np.unique(rts[np.isfinite(rts)].astype(int)))
+    cutoff = 1  # default: no cutoff needed
 
     for r in reversed(rt_vals):
         mask = np.isfinite(rts) & (rts.astype(int) >= r)
@@ -291,16 +316,24 @@ def _compute_rt_cutoff(bound_matrix, choices_pm, rts, threshold=0.65, min_trials
                 cong = np.mean(np.sign(bound_matrix[lc, k]) == choices_pm[lc])
                 max_cong = max(max_cong, cong)
         if max_cong >= threshold:
-            cutoff = r   # threshold met; try including one shorter RT
+            cutoff = r  # threshold met; try including one shorter RT
         else:
-            break        # adding shorter RT drops below threshold; stop
+            break  # adding shorter RT drops below threshold; stop
 
     return cutoff
 
 
-def get_bounds(steps_list, choices, min_rt=1, snr=None,
-               block_ids=None, rt_cutoff_threshold=0.65, ndt=2,
-               max_ndt=5, peak_step_bound=True):
+def get_bounds(
+    steps_list,
+    choices,
+    min_rt=1,
+    snr=None,
+    block_ids=None,
+    rt_cutoff_threshold=0.65,
+    ndt=2,
+    max_ndt=5,
+    peak_step_bound=True,
+):
     """
     Compute bounds, decision times, response times, and congruences.
     Translated from getPigeon_bounds.m
@@ -403,11 +436,11 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
         # slice of length maxNDT+1 (when rts>maxNDT); the equivalent 0-indexed
         # start is max(rts-maxNDT,1)-1 = max(rts-maxNDT-1,0), not max(rts-maxNDT,0)
         # (that under-counts by one element and silently drops the deepest NDT lag).
-        final_steps = these_steps[max(int(rts[ii]) - max_ndt - 1, 0):][::-1]  # reversed
+        final_steps = these_steps[max(int(rts[ii]) - max_ndt - 1, 0) :][::-1]  # reversed
         if len(final_steps) > 1:
             # midpoints between consecutive pairs
             midpoints = final_steps[1:] - np.diff(final_steps) / 2
-            bound_matrix[ii, :len(midpoints)] = midpoints
+            bound_matrix[ii, : len(midpoints)] = midpoints
 
     # Per-SNR-group congruence, for diagnostics only (see docstring).
     # Congruence at lag k = fraction of trials where sign(bound_matrix[:, k])
@@ -421,9 +454,7 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
         for ii in range(max_ndt):
             lc = ls & (bound_matrix[:, ii] != 0)
             if lc.sum() > 5:
-                congruences[ii, ss] = np.sum(
-                    np.sign(bound_matrix[lc, ii]) == choices_pm[lc]
-                ) / lc.sum()
+                congruences[ii, ss] = np.sum(np.sign(bound_matrix[lc, ii]) == choices_pm[lc]) / lc.sum()
 
     if ndt is not None:
         # Fixed NDT lag, same for every trial (used by calibration/simulation
@@ -439,9 +470,7 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
         for ii in range(1, min(4, max_ndt)):
             lc = ls & (bound_matrix[:, ii] != 0)
             if lc.sum() > 5:
-                low_snr_cong[ii] = np.sum(
-                    np.sign(bound_matrix[lc, ii]) == choices_pm[lc]
-                ) / lc.sum()
+                low_snr_cong[ii] = np.sum(np.sign(bound_matrix[lc, ii]) == choices_pm[lc]) / lc.sum()
         if np.any(np.isfinite(low_snr_cong)):
             max_cong = np.nanmax(low_snr_cong)
             ci = int(np.where(low_snr_cong == max_cong)[0][-1])  # ties -> largest lag
@@ -452,14 +481,14 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
     # the choice side at the NDT crossing, replace the midpoint with steps[RT-2-k]
     # (the earlier, outermost step — furthest from centre when retreating).
     for tt in np.where(np.isfinite(ndts))[0]:
-        k   = int(ndts[tt])
+        k = int(ndts[tt])
         mid = bound_matrix[tt, k]
 
         if peak_step_bound and mid != 0:
             sc = steps_list[tt]
             sc = sc[np.isfinite(sc)] if sc is not None else np.array([])
-            RT       = int(rts[tt])
-            t_later  = RT - 1 - k   # later step (closer to response)
+            RT = int(rts[tt])
+            t_later = RT - 1 - k  # later step (closer to response)
             t_earlier = RT - 2 - k  # earlier step (furthest from centre when retreating)
             if 0 <= t_earlier < len(sc) and t_later < len(sc):
                 step_in = sc[t_later] - sc[t_earlier]
@@ -482,8 +511,7 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
     if rt_cutoff_threshold is not None:
         for blk in np.unique(block_ids[np.isfinite(block_ids.astype(float))]):
             for snr_val in unique_snrs:
-                group = (np.isclose(block_ids.astype(float), float(blk)) &
-                         np.isclose(snr, snr_val))
+                group = np.isclose(block_ids.astype(float), float(blk)) & np.isclose(snr, snr_val)
                 if group.sum() < 5:
                     continue
                 cutoff = _compute_rt_cutoff(
@@ -497,8 +525,7 @@ def get_bounds(steps_list, choices, min_rt=1, snr=None,
     return bounds, dts, rts, congruences, rt_cutoffs
 
 
-def get_bounds_from_dv(choices, rts, DV, max_ndt=5, rt_cutoff_threshold=0.65,
-                        ndt=2, peak_step_bound=True):
+def get_bounds_from_dv(choices, rts, DV, max_ndt=5, rt_cutoff_threshold=0.65, ndt=2, peak_step_bound=True):
     """
     Like get_bounds but takes a pre-built DV matrix instead of a steps list.
 
@@ -523,8 +550,8 @@ def get_bounds_from_dv(choices, rts, DV, max_ndt=5, rt_cutoff_threshold=0.65,
         Same semantics as get_bounds; congruence has shape (max_ndt,) with
         no SNR dimension (caller supplies one SNR group at a time).
     """
-    n_trials   = len(choices)
-    rts        = np.asarray(rts,     dtype=float)
+    n_trials = len(choices)
+    rts = np.asarray(rts, dtype=float)
     choices_pm = np.asarray(choices, dtype=float) * 2 - 1
 
     # ── Build bound matrix (vectorised) ──────────────────────────────────────
@@ -555,19 +582,17 @@ def get_bounds_from_dv(choices, rts, DV, max_ndt=5, rt_cutoff_threshold=0.65,
     # ── RT cutoff ────────────────────────────────────────────────────────────
     rt_cutoffs = np.ones(n_trials, dtype=float)
     if rt_cutoff_threshold is not None:
-        rt_cutoffs[:] = _compute_rt_cutoff(
-            bound_matrix, choices_pm, rts, threshold=rt_cutoff_threshold
-        )
+        rt_cutoffs[:] = _compute_rt_cutoff(bound_matrix, choices_pm, rts, threshold=rt_cutoff_threshold)
 
     # ── Extract bounds with peak-step correction ──────────────────────────────
     bounds = np.full(n_trials, np.nan)
     for tt in np.where(np.isfinite(ndts))[0]:
-        k   = int(ndts[tt])
+        k = int(ndts[tt])
         mid = bound_matrix[tt, k]
 
         if peak_step_bound and mid != 0:
-            RT        = int(rts[tt])
-            t_later   = RT - 1 - k
+            RT = int(rts[tt])
+            t_later = RT - 1 - k
             t_earlier = RT - 2 - k
             if 0 <= t_earlier < DV.shape[1] and t_later < DV.shape[1]:
                 step_in = DV[tt, t_later] - DV[tt, t_earlier]
@@ -626,7 +651,7 @@ def get_crossing_diagnostics(data_table):
         if peak_b <= 0:
             continue
         sgn = np.sign(bounds[ii]) if np.isfinite(bounds[ii]) and bounds[ii] != 0 else np.sign(midpoint)
-        early[ii] = float(np.any(sc[:t - 1] * sgn >= peak_b)) if t >= 2 else 0.0
+        early[ii] = float(np.any(sc[: t - 1] * sgn >= peak_b)) if t >= 2 else 0.0
     return pd.DataFrame({"incongruent": incong, "premature_crossing": early}, index=data_table.index)
 
 
@@ -668,8 +693,7 @@ def get_steps_before_decision(data_table, num_steps=2):
     return pd.DataFrame(out, columns=[f"step_{kk}" for kk in range(num_steps)], index=data_table.index)
 
 
-def get_good_trial_array(data_table, min_dt=2, min_trial_number=10,
-                         block_index=None, apply_rt_cutoff=True):
+def get_good_trial_array(data_table, min_dt=2, min_trial_number=10, block_index=None, apply_rt_cutoff=True):
     """
     Standard trial selection filter.
     Translated from getPigeon_goodTrialArray.m
@@ -704,9 +728,7 @@ def get_good_trial_array(data_table, min_dt=2, min_trial_number=10,
     if min_trial_number is not None:
         lg = lg & (data_table["trial_number"] >= min_trial_number)
     if block_index is not None:
-        lg = lg & data_table["block_index"].isin(
-            [block_index] if np.isscalar(block_index) else block_index
-        )
+        lg = lg & data_table["block_index"].isin([block_index] if np.isscalar(block_index) else block_index)
     # Exclude wall-hit trials: pigeon reached screen edge, inflating RT/DT
     if "wall_hit" in data_table.columns:
         lg = lg & ~data_table["wall_hit"]
@@ -751,13 +773,13 @@ def apply_bias_corrections(data_table, bias_file):
         bias-corrected values.
     """
     mat = scipy.io.loadmat(bias_file)
-    bound_summary = mat["boundSummary"]       # (n_bounds, n_dt_bins, n_snr_bins)
-    sim_bounds = mat["simBounds"].ravel()     # (n_bounds,)
+    bound_summary = mat["boundSummary"]  # (n_bounds, n_dt_bins, n_snr_bins)
+    sim_bounds = mat["simBounds"].ravel()  # (n_bounds,)
     edges = np.asarray(mat["snrBinEdges"]).ravel()
     n_dts = bound_summary.shape[1]
 
     snrs = np.abs(data_table["snr"].to_numpy())
-    snr_bin = np.where(np.isfinite(snrs), np.digitize(snrs, edges), -1)   # bin i: edges[i-1] <= snr < edges[i]
+    snr_bin = np.where(np.isfinite(snrs), np.digitize(snrs, edges), -1)  # bin i: edges[i-1] <= snr < edges[i]
     dts = data_table["DT"].to_numpy()
     bounds = data_table["bound"].to_numpy(dtype=float).copy()
 
@@ -772,8 +794,9 @@ def apply_bias_corrections(data_table, bias_file):
             if lvalid.sum() < 2:
                 continue
             order = np.argsort(x[lvalid])  # a monotone interpolation grid
-            corrected = np.maximum(0.005, _interp_with_extrapolation(np.abs(bounds[ls]), x[lvalid][order],
-                                                                     sim_bounds[lvalid][order]))
+            corrected = np.maximum(
+                0.005, _interp_with_extrapolation(np.abs(bounds[ls]), x[lvalid][order], sim_bounds[lvalid][order])
+            )
             bounds[ls] = np.sign(bounds[ls]) * corrected
 
     data_table = data_table.copy()
@@ -861,8 +884,9 @@ def get_performance_summary(data_table, blocks="all", snrs="all"):
     return summary
 
 
-def get_bound_summary(data_table, correct_only=False, blocks="all",
-                      split_by_snr=True, max_rt=10, apply_quality_filter=True):
+def get_bound_summary(
+    data_table, correct_only=False, blocks="all", split_by_snr=True, max_rt=10, apply_quality_filter=True
+):
     """
     Summarize |bound| by subject, block, SNR, and DT.
     Translated from getPigeon_boundSummary.m
@@ -893,14 +917,16 @@ def get_bound_summary(data_table, correct_only=False, blocks="all",
     """
     subject_indices = np.sort(pd.unique(data_table["subject_index"].dropna()))
     abs_bounds = data_table["bound"].abs().to_numpy()
-    block_indices = (np.sort(data_table["block_index"].dropna().unique()) if blocks == "all"
-                     else np.atleast_1d(blocks))
+    block_indices = np.sort(data_table["block_index"].dropna().unique()) if blocks == "all" else np.atleast_1d(blocks)
 
     if split_by_snr:
         abs_snr = data_table["snr"].abs().to_numpy()
         snrs = np.sort(pd.unique(abs_snr[np.isfinite(abs_snr)]))
-        l_snrs = np.column_stack([np.isclose(abs_snr, s) for s in snrs]) \
-            if len(snrs) > 0 else np.zeros((len(data_table), 0), dtype=bool)
+        l_snrs = (
+            np.column_stack([np.isclose(abs_snr, s) for s in snrs])
+            if len(snrs) > 0
+            else np.zeros((len(data_table), 0), dtype=bool)
+        )
     else:
         l_snrs = np.ones((len(data_table), 1), dtype=bool)
 
@@ -925,8 +951,9 @@ def get_bound_summary(data_table, correct_only=False, blocks="all",
                     lg = l_sb & l_snrs[:, ni] & (True if dt is None else dt_arr == dt)
                     vals = abs_bounds[lg]
                     # ddof=1 to match MATLAB's std(), which normalizes by N-1, not N.
-                    summary[si, bi, ni, ri] = ([np.nanmean(vals), np.nanstd(vals, ddof=1), lg.sum()]
-                                               if vals.size else [np.nan, np.nan, 0])
+                    summary[si, bi, ni, ri] = (
+                        [np.nanmean(vals), np.nanstd(vals, ddof=1), lg.sum()] if vals.size else [np.nan, np.nan, 0]
+                    )
     return summary
 
 

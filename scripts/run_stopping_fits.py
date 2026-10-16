@@ -83,8 +83,10 @@ def main(variants):
             t0 = time.time()
             f = fit_stopping_models(d, **kwargs).assign(task=task)
             n_bad = int((~f.groupby("subject_index").success.first()).sum())
-            log(f"{variant} {task}: {f.subject_index.nunique()} subjects in {(time.time() - t0) / 60:.1f} min; "
-                f"{n_bad} did not converge")
+            log(
+                f"{variant} {task}: {f.subject_index.nunique()} subjects in {(time.time() - t0) / 60:.1f} min; "
+                f"{n_bad} did not converge"
+            )
             parts.append(f)
         out = OUT_DIR / f"stopping_fits_{variant}.pkl"
         pd.concat(parts, ignore_index=True).to_pickle(out)

@@ -118,12 +118,12 @@ from .pathDefaults import BIAS_CORRECTION_CP_FILE, BIAS_CORRECTION_FILE
 
 NDT_VALUES = (1, 2)
 KNOTS = (1, 6, 16)
-ANCHOR = 6   # knot where h = 1, so bound_scale is the mean bound there
+ANCHOR = 6  # knot where h = 1, so bound_scale is the mean bound there
 GROUP_PARAMS = ("bound_scale", "bound_cv", "guess_rate", "lapse_rate", "anticipation_rate")
 POST_PARAMS = ("bound_scale", "guess_rate")
-POST_SLOPE = "slope"   # post_params entry for the extra post-change-point slope of log theta (``slope_post``)
-PRE_SLOPE = "pre_slope"   # post_params entry for the pre-change-point slope of log theta (``slope_pre``)
-SHARED_PARAMS = ()   # default: every per-group parameter is separate per group
+POST_SLOPE = "slope"  # post_params entry for the extra post-change-point slope of log theta (``slope_post``)
+PRE_SLOPE = "pre_slope"  # post_params entry for the pre-change-point slope of log theta (``slope_pre``)
+SHARED_PARAMS = ()  # default: every per-group parameter is separate per group
 TIME_COURSES = ("flat", "shared", "per_group")
 TIME_COURSE_FORMS = ("knots", "knee")
 KNEE_PARAMS = ("log_h_start", "knee", "late_slope")
@@ -138,10 +138,10 @@ _LOG_SENSORY_LIMITS = (np.log(1e-3), np.log(1.0))
 _LOGIT_LIMITS = (-14.0, 8.5)
 _NDT_LOGIT_LIMITS = (-10.0, 10.0)
 _LOG_H_LIMITS = (-3.0, 3.0)
-_LOG_G_LIMITS = (-6.0, 6.0)   # logit-scale shift of the guess rate
-_KNEE_LIMITS = (1.5, 15.0)    # step of the knee (continuous); any knee in (1, 2] gives the same shape at whole steps
+_LOG_G_LIMITS = (-6.0, 6.0)  # logit-scale shift of the guess rate
+_KNEE_LIMITS = (1.5, 15.0)  # step of the knee (continuous); any knee in (1, 2] gives the same shape at whole steps
 PRE_SLOPE_ANCHORS = ("change_point", "start")
-_LATE_SLOPE_LIMITS = (-0.15, 0.15)   # change in log h per step after the knee
+_LATE_SLOPE_LIMITS = (-0.15, 0.15)  # change in log h per step after the knee
 _MIN_LIK = 1e-300
 _TINY = 1e-300
 
@@ -198,8 +198,9 @@ def get_log_h(fits, steps, knots=KNOTS):
     if lk.any():
         out[lk] = _knee_log_h(*(f.loc[lk, c].to_numpy(float) for c in KNEE_PARAMS), steps)
     if (~lk).any():
-        lh = np.stack([f[f"log_h_k{k}"].to_numpy(float) if f"log_h_k{k}" in f else np.zeros(len(f))
-                       for k in knots], axis=1)[~lk]
+        lh = np.stack(
+            [f[f"log_h_k{k}"].to_numpy(float) if f"log_h_k{k}" in f else np.zeros(len(f)) for k in knots], axis=1
+        )[~lk]
         out[~lk] = np.stack([np.interp(steps, knots, np.nan_to_num(row)) for row in lh])
     return out
 
@@ -272,9 +273,17 @@ def get_commit_sources(sim_table):
         return 1 <= dt < len(steps) and np.sign(steps[dt - 1]) * np.sign(steps[dt]) < 0
 
     zero_cross = np.array([_zero_crossing(np.asarray(st, float), dt) for st, dt in zip(t["steps"], t["DT"])])
-    src = np.select([t["commit_type"].isin(["guess", "anticipation"]).to_numpy(), t["lapse"].to_numpy(bool),
-                     (t["DT"] != t["commit_step"]).to_numpy(), ~t["true_crossed"].to_numpy(bool), zero_cross],
-                    list(COMMIT_SOURCES[:5]), COMMIT_SOURCES[5])
+    src = np.select(
+        [
+            t["commit_type"].isin(["guess", "anticipation"]).to_numpy(),
+            t["lapse"].to_numpy(bool),
+            (t["DT"] != t["commit_step"]).to_numpy(),
+            ~t["true_crossed"].to_numpy(bool),
+            zero_cross,
+        ],
+        list(COMMIT_SOURCES[:5]),
+        COMMIT_SOURCES[5],
+    )
     return pd.Series(src, index=t.index, name="source")
 
 
@@ -339,9 +348,23 @@ def _pad_steps(steps_list):
     return x, lens
 
 
-def _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values, ndt_probs,
-                      n_quad=24, wall=WALL, n_buckets=4, return_parts=False, shape_idx=None,
-                      pre_slope_anchor="change_point"):
+def _trial_likelihood(
+    x,
+    lens,
+    choice_pm,
+    group_idx,
+    post_mask,
+    p,
+    knots,
+    ndt_values,
+    ndt_probs,
+    n_quad=24,
+    wall=WALL,
+    n_buckets=4,
+    return_parts=False,
+    shape_idx=None,
+    pre_slope_anchor="change_point",
+):
     """
     Per-trial likelihood, computed in length buckets.
 
@@ -364,14 +387,40 @@ def _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_va
             continue
         L = int(lens[idx].max())
         out[:, idx] = _trial_likelihood_padded(
-            x[idx, :L], lens[idx], choice_pm[idx], group_idx[idx], post_mask[idx, :L], p, knots,
-            ndt_values, ndt_probs, n_quad=n_quad, wall=wall, return_parts=True,
-            shape_idx=None if shape_idx is None else shape_idx[idx], steps_to_cp=steps_to_cp[idx, :L])
+            x[idx, :L],
+            lens[idx],
+            choice_pm[idx],
+            group_idx[idx],
+            post_mask[idx, :L],
+            p,
+            knots,
+            ndt_values,
+            ndt_probs,
+            n_quad=n_quad,
+            wall=wall,
+            return_parts=True,
+            shape_idx=None if shape_idx is None else shape_idx[idx],
+            steps_to_cp=steps_to_cp[idx, :L],
+        )
     return out if return_parts else out[0]
 
 
-def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values, ndt_probs,
-                             n_quad=24, wall=WALL, return_parts=False, shape_idx=None, steps_to_cp=None):
+def _trial_likelihood_padded(
+    x,
+    lens,
+    choice_pm,
+    group_idx,
+    post_mask,
+    p,
+    knots,
+    ndt_values,
+    ndt_probs,
+    n_quad=24,
+    wall=WALL,
+    return_parts=False,
+    shape_idx=None,
+    steps_to_cp=None,
+):
     """
     Per-trial likelihood of (RT, choice) under the stopping model.
 
@@ -433,27 +482,31 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         log_h = _log_h(p["log_h"], knots, L)
     if shape_idx is None:
         shape_idx = group_idx if log_h.shape[0] > 1 else np.zeros(n, int)
-    scale = np.where(post_mask, np.asarray(p["bound_scale_post"])[group_idx][:, None],
-                     np.asarray(p["bound_scale"])[group_idx][:, None])
-    theta = scale * np.exp(log_h[shape_idx])                                  # (n, L)
+    scale = np.where(
+        post_mask,
+        np.asarray(p["bound_scale_post"])[group_idx][:, None],
+        np.asarray(p["bound_scale"])[group_idx][:, None],
+    )
+    theta = scale * np.exp(log_h[shape_idx])  # (n, L)
     if "slope_post" in p and np.any(np.asarray(p["slope_post"]) != 0):
-        steps_since_cp = np.maximum(np.cumsum(post_mask, axis=1) - 1, 0)       # j - change_point on post positions
+        steps_since_cp = np.maximum(np.cumsum(post_mask, axis=1) - 1, 0)  # j - change_point on post positions
         theta = theta * np.exp(np.asarray(p["slope_post"])[group_idx][:, None] * steps_since_cp)
     if "slope_pre" in p and np.any(np.asarray(p["slope_pre"]) != 0):
         if steps_to_cp is None:
             raise ValueError("slope_pre needs steps_to_cp (see _pre_cp_offsets).")
         theta = theta * np.exp(np.asarray(p["slope_pre"])[group_idx][:, None] * steps_to_cp)
-    kappa = (1.0 / np.asarray(p["bound_cv"], float) ** 2)[group_idx]           # gamma shape, mean 1
+    kappa = (1.0 / np.asarray(p["bound_cv"], float) ** 2)[group_idx]  # gamma shape, mean 1
 
-    gr = np.where(post_mask, np.asarray(p["guess_rate_post"])[group_idx][:, None],
-                  np.asarray(p["guess_rate"])[group_idx][:, None])
+    gr = np.where(
+        post_mask, np.asarray(p["guess_rate_post"])[group_idx][:, None], np.asarray(p["guess_rate"])[group_idx][:, None]
+    )
     log_g = _log_h(p.get("log_g", np.zeros((1, len(knots)))), knots, L)
     if np.any(log_g != 0):
         gshape_idx = group_idx if log_g.shape[0] > 1 else np.zeros(n, int)
         gr = _shift_logit(gr, log_g[gshape_idx])
     lapse = np.asarray(p["lapse_rate"])[group_idx]
     antic = np.asarray(p["anticipation_rate"])[group_idx]
-    log_guess_surv = np.log1p(-antic)[:, None] + np.cumsum(np.log1p(-gr), axis=1)   # no guess through k
+    log_guess_surv = np.log1p(-antic)[:, None] + np.cumsum(np.log1p(-gr), axis=1)  # no guess through k
     if sig > 0:
         p_right = scipy.special.ndtr(xx / sig)
         lo, hi = (ax - 5 * sig) / theta, (ax + 5 * sig) / theta
@@ -464,7 +517,7 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
     run_lo = np.maximum.accumulate(np.maximum(lo, 0.0), axis=1)
     run_hi = np.maximum.accumulate(hi, axis=1)
     gl_x, gl_w = np.polynomial.legendre.leggauss(n_quad)
-    nodes, weights = (gl_x + 1) / 2, gl_w / 2          # Gauss-Legendre on [0, 1]
+    nodes, weights = (gl_x + 1) / 2, gl_w / 2  # Gauss-Legendre on [0, 1]
 
     def integrate(k, commit):
         """Integral over m of S_{k-1} (survive) or S_{k-1} * commit-at-k terms (right, left)."""
@@ -474,10 +527,10 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         ua = scipy.stats.gamma.cdf(a, kappa, scale=1 / kappa)
         uc = scipy.stats.gamma.cdf(c, kappa, scale=1 / kappa)
         u = ua[:, None] + (uc - ua)[:, None] * nodes[None, :]
-        m = scipy.stats.gamma.ppf(u, kappa[:, None], scale=1 / kappa[:, None])   # (n, Q)
+        m = scipy.stats.gamma.ppf(u, kappa[:, None], scale=1 / kappa[:, None])  # (n, Q)
         kmax = int(k.max())
-        b = theta[:, :kmax + 1, None] * m[:, None, :]                          # (n, kmax+1, Q)
-        xb = xx[:, :kmax + 1, None]
+        b = theta[:, : kmax + 1, None] * m[:, None, :]  # (n, kmax+1, Q)
+        xb = xx[:, : kmax + 1, None]
         if sig > 0:
             up = scipy.special.ndtr((xb - b) / sig)
             dn = scipy.special.ndtr((-b - xb) / sig)
@@ -488,7 +541,7 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         q = np.clip(1.0 - up - dn, 0.0, 1.0)
         log_q = np.cumsum(np.log(np.maximum(q, _TINY)), axis=1)
         s_prev_guess = np.exp(log_guess_surv[rows, k - 1])
-        s_prev = s_prev_guess[:, None] * np.exp(log_q[rows, k - 1, :])        # (n, Q)
+        s_prev = s_prev_guess[:, None] * np.exp(log_q[rows, k - 1, :])  # (n, Q)
         width = uc - ua
         if not commit:
             return width * (s_prev @ weights) + (1 - uc) * s_prev_guess
@@ -517,16 +570,16 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
         lik[lw] = (s_wall * np.where(same, 1 - lapse / 2, lapse / 2))[lw]
 
     lik_wall = lik.copy()
-    lant = lens == 1                       # first-frame press: anticipation only
+    lant = lens == 1  # first-frame press: anticipation only
     lik[lant] = antic[lant] * 0.5
     lik_guess = np.where(lant, lik, 0.0)
     for ndt, p_ndt in zip(ndt_values, ndt_probs):
         k = lens - ndt - 1
         term = np.zeros(n)
         term_g = np.zeros(n)
-        l0 = ~lw & ~lant & (k == 0)          # guess on the start frame (no evidence)
+        l0 = ~lw & ~lant & (k == 0)  # guess on the start frame (no evidence)
         term[l0] = term_g[l0] = (1 - antic[l0]) * gr[l0, 0] * 0.5
-        lk = ~lw & ~lant & (k >= 1)          # k < 0 is impossible for this NDT
+        lk = ~lw & ~lant & (k >= 1)  # k < 0 is impossible for this NDT
         if lk.any():
             kk = np.where(lk, k, 1)
             pr, pl, pr_g, pl_g = integrate(kk, commit=True)
@@ -544,8 +597,20 @@ def _trial_likelihood_padded(x, lens, choice_pm, group_idx, post_mask, p, knots,
 class _Layout:
     """Bookkeeping between the transformed parameter vector and named parameters."""
 
-    def __init__(self, n_groups, post_params, n_ndt, time_course, n_knots, fixed, shared_params=(), anchor_idx=0,
-                 guess_time_course="flat", time_course_form="knots", n_tc_groups=None):
+    def __init__(
+        self,
+        n_groups,
+        post_params,
+        n_ndt,
+        time_course,
+        n_knots,
+        fixed,
+        shared_params=(),
+        anchor_idx=0,
+        guess_time_course="flat",
+        time_course_form="knots",
+        n_tc_groups=None,
+    ):
         self.n_groups, self.n_ndt, self.time_course = n_groups, n_ndt, time_course
         self.knee = time_course_form == "knee" and time_course != "flat"
         self.post_params = tuple(q for q in POST_PARAMS if q in post_params)
@@ -565,14 +630,16 @@ class _Layout:
         self.n_gshapes = {"flat": 0, "shared": 1, "per_group": n_groups}[guess_time_course]
         self.n_free_h = n_knots - 1
         self.anchor_idx = anchor_idx
-        spec = []   # (name, size, limits)
+        spec = []  # (name, size, limits)
         G = n_groups
         size = lambda name: 1 if name in self.shared else G  # noqa: E731
-        spec += [("bound_scale", size("bound_scale"), _LOG_POS_LIMITS),
-                 ("bound_cv", size("bound_cv"), _LOG_CV_LIMITS),
-                 ("guess_rate", size("guess_rate"), _LOGIT_LIMITS),
-                 ("lapse_rate", size("lapse_rate"), _LOGIT_LIMITS),
-                 ("anticipation_rate", size("anticipation_rate"), _LOGIT_LIMITS)]
+        spec += [
+            ("bound_scale", size("bound_scale"), _LOG_POS_LIMITS),
+            ("bound_cv", size("bound_cv"), _LOG_CV_LIMITS),
+            ("guess_rate", size("guess_rate"), _LOGIT_LIMITS),
+            ("lapse_rate", size("lapse_rate"), _LOGIT_LIMITS),
+            ("anticipation_rate", size("anticipation_rate"), _LOGIT_LIMITS),
+        ]
         for name in self.post_params:
             spec.append((f"{name}_post", G, _LOGIT_LIMITS if name == "guess_rate" else _LOG_POS_LIMITS))
         if self.post_slope:
@@ -582,8 +649,11 @@ class _Layout:
         spec.append(("sensory_std", 1, _LOG_SENSORY_LIMITS))
         spec.append(("ndt_logits", n_ndt - 1, _NDT_LOGIT_LIMITS))
         if self.knee:
-            spec += [("log_h_start", self.n_shapes, _LOG_H_LIMITS), ("knee", self.n_shapes, _KNEE_LIMITS),
-                     ("late_slope", self.n_shapes, _LATE_SLOPE_LIMITS)]
+            spec += [
+                ("log_h_start", self.n_shapes, _LOG_H_LIMITS),
+                ("knee", self.n_shapes, _KNEE_LIMITS),
+                ("late_slope", self.n_shapes, _LATE_SLOPE_LIMITS),
+            ]
         else:
             spec.append(("log_h", self.n_shapes * self.n_free_h, _LOG_H_LIMITS))
         spec.append(("log_g", self.n_gshapes * self.n_free_h, _LOG_G_LIMITS))
@@ -595,7 +665,7 @@ class _Layout:
     def unpack(self, theta):
         out, i = {}, 0
         for name, size, _ in self.spec:
-            out[name] = theta[i:i + size]
+            out[name] = theta[i : i + size]
             i += size
         p = {}
         for name in GROUP_PARAMS + tuple(f"{q}_post" for q in self.post_params):
@@ -607,24 +677,33 @@ class _Layout:
                 p[name] = np.broadcast_to(np.exp(out[name]), (self.n_groups,))
         for name in POST_PARAMS:
             p.setdefault(f"{name}_post", p[name])
-        p["slope_post"] = (np.asarray(out["slope_post"], float) if "slope_post" in out
-                           else np.zeros(self.n_groups))
-        p["slope_pre"] = (np.asarray(out["slope_pre"], float) if "slope_pre" in out
-                          else np.zeros(self.n_groups))
-        p["sensory_std"] = (float(self.fixed["sensory_std"]) if "sensory_std" in self.fixed
-                            else float(np.exp(out["sensory_std"][0])))
-        logits = np.r_[0.0, self.fixed["ndt_logits"] if "ndt_logits" in self.fixed
-                       else out.get("ndt_logits", np.zeros(0))]
+        p["slope_post"] = np.asarray(out["slope_post"], float) if "slope_post" in out else np.zeros(self.n_groups)
+        p["slope_pre"] = np.asarray(out["slope_pre"], float) if "slope_pre" in out else np.zeros(self.n_groups)
+        p["sensory_std"] = (
+            float(self.fixed["sensory_std"]) if "sensory_std" in self.fixed else float(np.exp(out["sensory_std"][0]))
+        )
+        logits = np.r_[
+            0.0, self.fixed["ndt_logits"] if "ndt_logits" in self.fixed else out.get("ndt_logits", np.zeros(0))
+        ]
         p["ndt_probs"] = np.exp(logits - scipy.special.logsumexp(logits))
-        free_h = out.get("log_h", np.zeros(0)).reshape(max(self.n_shapes, 1), -1) \
-            if self.n_shapes and not self.knee else np.zeros((1, self.n_free_h))
+        free_h = (
+            out.get("log_h", np.zeros(0)).reshape(max(self.n_shapes, 1), -1)
+            if self.n_shapes and not self.knee
+            else np.zeros((1, self.n_free_h))
+        )
         p["log_h"] = np.insert(free_h, self.anchor_idx, 0.0, axis=1)
         if self.knee:
             for name in KNEE_PARAMS:
-                p[name] = (np.broadcast_to(np.asarray(self.fixed[name], float), (self.n_shapes,)) if name in self.fixed
-                           else np.asarray(out[name], float))
-        free_g = out.get("log_g", np.zeros(0)).reshape(max(self.n_gshapes, 1), -1) \
-            if self.n_gshapes else np.zeros((1, self.n_free_h))
+                p[name] = (
+                    np.broadcast_to(np.asarray(self.fixed[name], float), (self.n_shapes,))
+                    if name in self.fixed
+                    else np.asarray(out[name], float)
+                )
+        free_g = (
+            out.get("log_g", np.zeros(0)).reshape(max(self.n_gshapes, 1), -1)
+            if self.n_gshapes
+            else np.zeros((1, self.n_free_h))
+        )
         p["log_g"] = np.insert(free_g, self.anchor_idx, 0.0, axis=1)
         return p
 
@@ -635,16 +714,27 @@ def _prepare(data_table, group_col):
     choice_pm = data_table["choice"].to_numpy(float) * 2 - 1
     groups = np.asarray(data_table[group_col]) if group_col is not None else np.zeros(len(data_table))
     group_values, group_idx = np.unique(groups, return_inverse=True)
-    cp = (data_table["change_point"].fillna(0).to_numpy(float)
-          if "change_point" in data_table else np.zeros(len(data_table)))
+    cp = (
+        data_table["change_point"].fillna(0).to_numpy(float)
+        if "change_point" in data_table
+        else np.zeros(len(data_table))
+    )
     # Wide enough to hold every change point, so it can be recovered for trials that end before it.
     width = max(x.shape[1], int(cp.max()) + 1)
     post_mask = (cp[:, None] > 0) & (np.arange(width)[None, :] >= cp[:, None])
     return x, lens, choice_pm, group_values, group_idx, post_mask
 
 
-def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
-                       ndt_values=NDT_VALUES, n_quad=24, wall=WALL, pre_slope_anchor="change_point"):
+def stopping_model_nll(
+    data_table,
+    params,
+    group_col="block_index",
+    knots=KNOTS,
+    ndt_values=NDT_VALUES,
+    n_quad=24,
+    wall=WALL,
+    pre_slope_anchor="change_point",
+):
     """
     Negative log-likelihood of a data table under given stopping-model parameters.
 
@@ -681,17 +771,44 @@ def stopping_model_nll(data_table, params, group_col="block_index", knots=KNOTS,
     if "knee" in params:
         for name in KNEE_PARAMS:
             p[name] = np.atleast_1d(np.asarray(params[name], float))
-    lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values,
-                            np.asarray(params["ndt_probs"], float), n_quad=n_quad, wall=wall,
-                            pre_slope_anchor=pre_slope_anchor)
+    lik = _trial_likelihood(
+        x,
+        lens,
+        choice_pm,
+        group_idx,
+        post_mask,
+        p,
+        knots,
+        ndt_values,
+        np.asarray(params["ndt_probs"], float),
+        n_quad=n_quad,
+        wall=wall,
+        pre_slope_anchor=pre_slope_anchor,
+    )
     return float(-np.sum(np.log(np.maximum(lik, _MIN_LIK))))
 
 
-def fit_stopping_model(data_table, group_col="block_index", post_params=(), time_course="shared",
-                       shared_params=SHARED_PARAMS, knots=KNOTS, ndt_values=NDT_VALUES, fixed=None,
-                       smooth_penalty=2.0, anchor=ANCHOR, n_quad=24, wall=WALL, x0=None,
-                       max_evals=200_000, guess_time_course="flat", time_course_form="knee",
-                       time_course_col=None, knee_starts=KNEE_STARTS, pre_slope_anchor="change_point"):
+def fit_stopping_model(
+    data_table,
+    group_col="block_index",
+    post_params=(),
+    time_course="shared",
+    shared_params=SHARED_PARAMS,
+    knots=KNOTS,
+    ndt_values=NDT_VALUES,
+    fixed=None,
+    smooth_penalty=2.0,
+    anchor=ANCHOR,
+    n_quad=24,
+    wall=WALL,
+    x0=None,
+    max_evals=200_000,
+    guess_time_course="flat",
+    time_course_form="knee",
+    time_course_col=None,
+    knee_starts=KNEE_STARTS,
+    pre_slope_anchor="change_point",
+):
     """
     Maximum-likelihood fit of the stopping model to one subject's trials.
 
@@ -806,8 +923,9 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         raise ValueError("fit_stopping_model: rows with missing choice; select trials first.")
     unknown = set(post_params) - set(POST_PARAMS + (POST_SLOPE, PRE_SLOPE))
     if unknown:
-        raise ValueError(f"post_params must be a subset of {POST_PARAMS + (POST_SLOPE, PRE_SLOPE)}; "
-                         f"got {sorted(unknown)}.")
+        raise ValueError(
+            f"post_params must be a subset of {POST_PARAMS + (POST_SLOPE, PRE_SLOPE)}; got {sorted(unknown)}."
+        )
     if time_course not in TIME_COURSES or guess_time_course not in TIME_COURSES:
         raise ValueError(f"time_course and guess_time_course must be one of {TIME_COURSES}.")
     if time_course_form not in TIME_COURSE_FORMS:
@@ -822,10 +940,19 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         if time_course == "flat":
             raise ValueError("time_course_col needs a bound time course (time_course != 'flat').")
         tc_values, tc_idx = np.unique(np.asarray(data_table[time_course_col]), return_inverse=True)
-    lay = _Layout(G, post_params, len(ndt_values), time_course, len(knots), fixed, shared_params,
-                  anchor_idx=list(knots).index(anchor), guess_time_course=guess_time_course,
-                  time_course_form=time_course_form,
-                  n_tc_groups=None if tc_values is None else len(tc_values))
+    lay = _Layout(
+        G,
+        post_params,
+        len(ndt_values),
+        time_course,
+        len(knots),
+        fixed,
+        shared_params,
+        anchor_idx=list(knots).index(anchor),
+        guess_time_course=guess_time_course,
+        time_course_form=time_course_form,
+        n_tc_groups=None if tc_values is None else len(tc_values),
+    )
 
     if x0 is None:
         k = np.clip(lens - 2, 0, x.shape[1] - 1)
@@ -833,23 +960,26 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         med = float(np.clip(np.nanmedian(ax_k) if ax_k.size else 0.1, 0.02, 1.0))
         step_sd = np.nanstd(np.diff(x, axis=1))
         start = {
-            "bound_scale": np.full(G, np.log(med)), "bound_cv": np.full(G, np.log(0.4)),
+            "bound_scale": np.full(G, np.log(med)),
+            "bound_cv": np.full(G, np.log(0.4)),
             "guess_rate": np.full(G, scipy.special.logit(0.02)),
             "lapse_rate": np.full(G, scipy.special.logit(0.03)),
             "anticipation_rate": np.full(G, scipy.special.logit(max(np.mean(lens <= 2), 0.005))),
             "bound_scale_post": np.full(G, np.log(med)),
             "guess_rate_post": np.full(G, scipy.special.logit(0.02)),
-            "slope_post": np.zeros(G), "slope_pre": np.zeros(G),
+            "slope_post": np.zeros(G),
+            "slope_pre": np.zeros(G),
             "sensory_std": np.array([np.log(max(0.3 * step_sd, 2e-3))]),
             "ndt_logits": np.zeros(len(ndt_values) - 1),
             "log_h": np.zeros(lay.n_shapes * lay.n_free_h),
             "log_g": np.zeros(lay.n_gshapes * lay.n_free_h),
-            "log_h_start": np.zeros(lay.n_shapes), "knee": np.full(lay.n_shapes, 4.0),
+            "log_h_start": np.zeros(lay.n_shapes),
+            "knee": np.full(lay.n_shapes, 4.0),
             "late_slope": np.zeros(lay.n_shapes),
         }
         x0s = []
         multi = lay.knee and "knee" not in lay.fixed
-        for knee0 in (knee_starts if multi else knee_starts[:1]):
+        for knee0 in knee_starts if multi else knee_starts[:1]:
             start["knee"] = np.full(lay.n_shapes, float(knee0))
             x0s.append(np.concatenate([start[name][:size] for name, size, _ in lay.spec]))
     else:
@@ -857,22 +987,48 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
 
     def objective(theta):
         p = lay.unpack(theta)
-        lik = _trial_likelihood(x, lens, choice_pm, group_idx, post_mask, p, knots, ndt_values,
-                                p["ndt_probs"], n_quad=n_quad, wall=wall, shape_idx=tc_idx,
-                                pre_slope_anchor=pre_slope_anchor)
+        lik = _trial_likelihood(
+            x,
+            lens,
+            choice_pm,
+            group_idx,
+            post_mask,
+            p,
+            knots,
+            ndt_values,
+            p["ndt_probs"],
+            n_quad=n_quad,
+            wall=wall,
+            shape_idx=tc_idx,
+            pre_slope_anchor=pre_slope_anchor,
+        )
         nll = -np.sum(np.log(np.maximum(lik, _MIN_LIK)))
         if lay.knee:
             tc_pen = np.sum(p["log_h_start"] ** 2) + np.sum((10 * p["late_slope"]) ** 2)
         else:
             tc_pen = np.sum(np.diff(p["log_h"], axis=1) ** 2)
         # The post- and pre-change slopes get the late slope's prior (SD 0.5 on the change over 10 steps).
-        penalty = (tc_pen + np.sum(np.diff(p["log_g"], axis=1) ** 2) + np.sum((10 * p["slope_post"]) ** 2)
-                   + np.sum((10 * p["slope_pre"]) ** 2))
+        penalty = (
+            tc_pen
+            + np.sum(np.diff(p["log_g"], axis=1) ** 2)
+            + np.sum((10 * p["slope_post"]) ** 2)
+            + np.sum((10 * p["slope_pre"]) ** 2)
+        )
         return nll + smooth_penalty * penalty, nll
 
-    res = min((scipy.optimize.minimize(lambda t: objective(t)[0], x, method="L-BFGS-B", bounds=lay.limits(),
-                                       options={"maxfun": max_evals, "maxiter": max_evals}) for x in x0s),
-              key=lambda r: r.fun)
+    res = min(
+        (
+            scipy.optimize.minimize(
+                lambda t: objective(t)[0],
+                x,
+                method="L-BFGS-B",
+                bounds=lay.limits(),
+                options={"maxfun": max_evals, "maxiter": max_evals},
+            )
+            for x in x0s
+        ),
+        key=lambda r: r.fun,
+    )
     p = lay.unpack(res.x)
 
     slope_cols = (["slope_post"] if lay.post_slope else []) + (["slope_pre"] if lay.pre_slope else [])
@@ -888,7 +1044,7 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         table[f"ndt_p{v}"] = pv
     lg = np.broadcast_to(p["log_g"], (G, len(knots)))
     if tc_values is not None:
-        pass   # shapes are attached per (group, time-course value) row below
+        pass  # shapes are attached per (group, time-course value) row below
     elif lay.knee:
         for name in KNEE_PARAMS:
             table[name] = np.broadcast_to(p[name], (G,))
@@ -906,8 +1062,11 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
         table.insert(1, "time_course_group", tc_values[si])
         table["n_trials"] = pairs.to_numpy()
         shape_cols = list(KNEE_PARAMS) if lay.knee else [f"log_h_k{kn}" for kn in knots]
-        shapes = (np.stack([p[c] for c in KNEE_PARAMS], axis=1) if lay.knee
-                  else np.broadcast_to(p["log_h"], (lay.n_shapes, len(knots))))
+        shapes = (
+            np.stack([p[c] for c in KNEE_PARAMS], axis=1)
+            if lay.knee
+            else np.broadcast_to(p["log_h"], (lay.n_shapes, len(knots)))
+        )
         table[shape_cols] = pd.DataFrame(shapes[si], columns=shape_cols)
     return {
         "params": table,
@@ -920,12 +1079,33 @@ def fit_stopping_model(data_table, group_col="block_index", post_params=(), time
     }
 
 
-def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_scale, bound_cv,
-                             guess_rate=0.0, lapse_rate=0.0, anticipation_rate=0.0, sensory_std=0.0,
-                             log_h=None, knots=KNOTS, ndt_values=NDT_VALUES, ndt_probs=(1.0, 0.0),
-                             change_point=0, generative_mean_post=None, bound_scale_post=None,
-                             guess_rate_post=None, max_steps=200, wall=WALL, rng=None, log_g=None,
-                             knee_shape=None, slope_post=0.0, slope_pre=0.0, pre_slope_anchor="change_point"):
+def simulate_stopping_trials(
+    num_trials,
+    generative_mean,
+    generative_std,
+    bound_scale,
+    bound_cv,
+    guess_rate=0.0,
+    lapse_rate=0.0,
+    anticipation_rate=0.0,
+    sensory_std=0.0,
+    log_h=None,
+    knots=KNOTS,
+    ndt_values=NDT_VALUES,
+    ndt_probs=(1.0, 0.0),
+    change_point=0,
+    generative_mean_post=None,
+    bound_scale_post=None,
+    guess_rate_post=None,
+    max_steps=200,
+    wall=WALL,
+    rng=None,
+    log_g=None,
+    knee_shape=None,
+    slope_post=0.0,
+    slope_pre=0.0,
+    pre_slope_anchor="change_point",
+):
     """
     Simulate trials from the stopping model (the generative model fit by fit_stopping_model).
 
@@ -1009,7 +1189,7 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     if log_g is not None:
         gr = _shift_logit(gr, np.interp(np.arange(max_steps + 1), knots, np.asarray(log_g, float))[None, :])
     hit_guess = rng.random((n, max_steps + 1)) < gr
-    hit_bound[:, 0] = False   # no evidence at the start frame; guesses there are allowed
+    hit_bound[:, 0] = False  # no evidence at the start frame; guesses there are allowed
 
     last = max_steps - max(ndt_values) - 1
     big = max_steps + 10
@@ -1029,7 +1209,7 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     rt = k + ndt + 1
 
     lant = rng.random(n) < anticipation_rate
-    rt[lant] = 1                                 # key pressed during the first frame
+    rt[lant] = 1  # key pressed during the first frame
     choice[lant] = rand_side[lant]
     k[lant] = 0
     ctype[lant] = "anticipation"
@@ -1040,20 +1220,22 @@ def simulate_stopping_trials(num_trials, generative_mean, generative_std, bound_
     theta_k = np.broadcast_to(theta, (n, max_steps + 1))[rows, k] * mult
     true_crossed = (shown[rows, k] * side >= theta_k) & (k > 0) & ~lant
     steps = [shown[tt, : rt[tt]] for tt in range(n)]
-    return pd.DataFrame({
-        "steps": steps,
-        "RT": rt,
-        "choice": (choice > 0).astype(float),
-        "correct": (choice == sgn).astype(float),
-        "change_point": cp.astype(float),
-        "wall_hit": [bool(np.any(np.abs(s) >= wall - 1e-9)) for s in steps],
-        "commit_step": k,
-        "ndt": ndt,
-        "commit_type": ctype,
-        "bound_multiplier": mult,
-        "lapse": lapse & ~lant,
-        "true_crossed": true_crossed,
-    })
+    return pd.DataFrame(
+        {
+            "steps": steps,
+            "RT": rt,
+            "choice": (choice > 0).astype(float),
+            "correct": (choice == sgn).astype(float),
+            "change_point": cp.astype(float),
+            "wall_hit": [bool(np.any(np.abs(s) >= wall - 1e-9)) for s in steps],
+            "commit_step": k,
+            "ndt": ndt,
+            "commit_type": ctype,
+            "bound_multiplier": mult,
+            "lapse": lapse & ~lant,
+            "true_crossed": true_crossed,
+        }
+    )
 
 
 def _params_from_fits(fit_rows, knots=KNOTS):
@@ -1076,15 +1258,17 @@ def _params_from_fits(fit_rows, knots=KNOTS):
         for name in KNEE_PARAMS:
             params[name] = f[name].to_numpy(float)
     else:
-        params["log_h"] = np.stack([f.get(f"log_h_k{k}", pd.Series(0.0, index=f.index)).to_numpy(float)
-                                    for k in knots], axis=1)
+        params["log_h"] = np.stack(
+            [f.get(f"log_h_k{k}", pd.Series(0.0, index=f.index)).to_numpy(float) for k in knots], axis=1
+        )
     if f"log_g_k{knots[0]}" in f and np.isfinite(f[f"log_g_k{knots[0]}"]).all():
         params["log_g"] = np.stack([f[f"log_g_k{k}"].to_numpy(float) for k in knots], axis=1)
     return params
 
 
-def get_commit_type_probabilities(data_table, fits, group_col="condition", knots=KNOTS, ndt_values=NDT_VALUES,
-                                  n_quad=24, wall=WALL):
+def get_commit_type_probabilities(
+    data_table, fits, group_col="condition", knots=KNOTS, ndt_values=NDT_VALUES, n_quad=24, wall=WALL
+):
     """
     Posterior probability that each trial's commit was a guess, under the fitted model.
 
@@ -1111,8 +1295,9 @@ def get_commit_type_probabilities(data_table, fits, group_col="condition", knots
     """
     out = pd.Series(np.nan, index=data_table.index, name="p_guess")
     for d, args, kwargs in _subject_likelihood_inputs(data_table, fits, group_col, knots):
-        lik, lik_guess, lik_wall = _trial_likelihood(*args, **kwargs, ndt_values=ndt_values, n_quad=n_quad,
-                                                     wall=wall, return_parts=True)
+        lik, lik_guess, lik_wall = _trial_likelihood(
+            *args, **kwargs, ndt_values=ndt_values, n_quad=n_quad, wall=wall, return_parts=True
+        )
         with np.errstate(invalid="ignore", divide="ignore"):
             pg = np.where(lik_wall > 0, np.nan, lik_guess / lik)
         out.loc[d.index] = pg
@@ -1144,8 +1329,9 @@ def _subject_likelihood_inputs(data_table, fits, group_col, knots):
         yield d, (x, lens, choice_pm, group_idx, post_mask, q, knots), {"ndt_probs": p["ndt_probs"]}
 
 
-def get_choice_probabilities(data_table, fits, group_col="condition", knots=KNOTS, ndt_values=NDT_VALUES,
-                             n_quad=24, wall=WALL):
+def get_choice_probabilities(
+    data_table, fits, group_col="condition", knots=KNOTS, ndt_values=NDT_VALUES, n_quad=24, wall=WALL
+):
     """
     Model probability of a rightward choice on each trial, given its trajectory and RT.
 
@@ -1172,7 +1358,8 @@ def get_choice_probabilities(data_table, fits, group_col="condition", knots=KNOT
     """
     out = pd.Series(np.nan, index=data_table.index, name="p_right")
     for d, (x, lens, _, group_idx, post_mask, q, knots_), kwargs in _subject_likelihood_inputs(
-            data_table, fits, group_col, knots):
+        data_table, fits, group_col, knots
+    ):
         common = dict(ndt_values=ndt_values, n_quad=n_quad, wall=wall, **kwargs)
         ones = np.ones(len(lens))
         lik_r = _trial_likelihood(x, lens, ones, group_idx, post_mask, q, knots_, **common)
@@ -1224,6 +1411,7 @@ def fit_stopping_models(data_table, max_workers=None, subject_kwargs=None, **kwa
         results = [_fit_one_subject(job) for job in jobs]
     else:
         from concurrent.futures import ProcessPoolExecutor
+
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
             results = list(pool.map(_fit_one_subject, jobs))
 
@@ -1235,14 +1423,28 @@ def fit_stopping_models(data_table, max_workers=None, subject_kwargs=None, **kwa
         t = fit["params"].copy()
         t.insert(0, "subject_index", subject)
         t["nll"], t["n_params"], t["success"], t["message"], t["error"] = (
-            fit["nll"], fit["n_params"], fit["success"], fit["message"], None)
+            fit["nll"],
+            fit["n_params"],
+            fit["success"],
+            fit["message"],
+            None,
+        )
         rows.append(t)
     return pd.concat(rows, ignore_index=True)
 
 
-def simulate_stopping_data_table(data_table, fits, group_col="block_index", post_generative_mean=None,
-                                 knots=KNOTS, ndt_values=NDT_VALUES, num_reps=1, max_steps=200,
-                                 wall=WALL, rng=None):
+def simulate_stopping_data_table(
+    data_table,
+    fits,
+    group_col="block_index",
+    post_generative_mean=None,
+    knots=KNOTS,
+    ndt_values=NDT_VALUES,
+    num_reps=1,
+    max_steps=200,
+    wall=WALL,
+    rng=None,
+):
     """
     Simulate each subject's trials from their fitted stopping-model parameters.
 
@@ -1285,7 +1487,8 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
     fits = fits.set_index(["subject_index", "group"])
     out = []
     for (subject, group, block, mean, std), cell in d.groupby(
-            ["subject_index", group_col, "block_index", "_mean", "step_std"]):
+        ["subject_index", group_col, "block_index", "_mean", "step_std"]
+    ):
         f = fits.loc[(subject, group)]
         if not np.isfinite(f["bound_scale"]):
             continue
@@ -1300,15 +1503,28 @@ def simulate_stopping_data_table(data_table, fits, group_col="block_index", post
                 if name in f and np.isfinite(f[name]):
                     post[name] = f[name]
         sim = simulate_stopping_trials(
-            len(cps), mean, std, f["bound_scale"], f["bound_cv"], f["guess_rate"], f["lapse_rate"],
-            f["anticipation_rate"], f["sensory_std"],
-            log_h=[f.get(f"log_h_k{kn}", 0.0) for kn in knots], knots=knots, ndt_values=ndt_values,
+            len(cps),
+            mean,
+            std,
+            f["bound_scale"],
+            f["bound_cv"],
+            f["guess_rate"],
+            f["lapse_rate"],
+            f["anticipation_rate"],
+            f["sensory_std"],
+            log_h=[f.get(f"log_h_k{kn}", 0.0) for kn in knots],
+            knots=knots,
+            ndt_values=ndt_values,
             knee_shape=(tuple(f[c] for c in KNEE_PARAMS) if np.isfinite(f.get("knee", np.nan)) else None),
             # Fits made without a guess time course have no (or NaN) log_g columns: constant guessing.
-            log_g=([f[f"log_g_k{kn}"] for kn in knots]
-                   if np.isfinite(f.get(f"log_g_k{knots[0]}", np.nan)) else None),
-            ndt_probs=[f[f"ndt_p{v}"] for v in ndt_values], change_point=cps,
-            max_steps=max_steps, wall=wall, rng=rng, **post)
+            log_g=([f[f"log_g_k{kn}"] for kn in knots] if np.isfinite(f.get(f"log_g_k{knots[0]}", np.nan)) else None),
+            ndt_probs=[f[f"ndt_p{v}"] for v in ndt_values],
+            change_point=cps,
+            max_steps=max_steps,
+            wall=wall,
+            rng=rng,
+            **post,
+        )
         sim.insert(0, "subject_index", subject)
         sim[group_col], sim["block_index"], sim["snr"] = group, block, mean / std
         sim["rep"] = np.repeat(np.arange(num_reps), len(cell))
@@ -1350,9 +1566,14 @@ def infer_bounds_like_data(sim_table, max_ndt=5, peak_step_bound=True):
         out[col] = np.nan
     for _, g in out.groupby(keys):
         bounds, dts, rts, _, cutoffs = get_bounds(
-            list(g["steps"]), g["choice"].to_numpy(float), snr=np.abs(g["snr"].to_numpy(float)),
-            block_ids=g["block_index"].to_numpy(float), ndt=None, max_ndt=max_ndt,
-            peak_step_bound=peak_step_bound)
+            list(g["steps"]),
+            g["choice"].to_numpy(float),
+            snr=np.abs(g["snr"].to_numpy(float)),
+            block_ids=g["block_index"].to_numpy(float),
+            ndt=None,
+            max_ndt=max_ndt,
+            peak_step_bound=peak_step_bound,
+        )
         out.loc[g.index, "bound"] = bounds
         out.loc[g.index, "DT"] = dts
         out.loc[g.index, "rt_cutoff"] = cutoffs
@@ -1403,25 +1624,34 @@ def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclus
         # MXSC's SNRs are covered only by the change-point calibration.
         bias_file = BIAS_CORRECTION_CP_FILE if task_type == "MXSC" else BIAS_CORRECTION_FILE
         dc = get_data_table(task_type=task_type, combine_snr=False, correct_bias=bias_file)
-        good_tau = get_adaptation_tau_fits(dc[dc["block_index"].isin(blocks)], blocks=blocks,
-                                           max_trial=40)["good_tau"]
+        good_tau = get_adaptation_tau_fits(dc[dc["block_index"].isin(blocks)], blocks=blocks, max_trial=40)["good_tau"]
         l_tau = ~get_tau_exclusion_mask(d, good_tau)
         if verbose:
-            print(f"{task_type}: subjects with a good adaptation tau fit, by block: "
-                  f"{good_tau.notna().sum().to_dict()}")
+            print(f"{task_type}: subjects with a good adaptation tau fit, by block: {good_tau.notna().sum().to_dict()}")
     if verbose:
-        print(f"{task_type}: {len(d):,} trials in blocks {blocks}; excluded {l_early.sum():,} with "
-              f"trial_number < {min_trial_number}, {(l_tau & ~l_early).sum():,} more in the adaptation "
-              f"transient, {(l_nochoice & ~l_early & ~l_tau).sum():,} more with no choice; "
-              f"{d['subject_index'].nunique()} subjects")
+        print(
+            f"{task_type}: {len(d):,} trials in blocks {blocks}; excluded {l_early.sum():,} with "
+            f"trial_number < {min_trial_number}, {(l_tau & ~l_early).sum():,} more in the adaptation "
+            f"transient, {(l_nochoice & ~l_early & ~l_tau).sum():,} more with no choice; "
+            f"{d['subject_index'].nunique()} subjects"
+        )
     d = d[~l_early & ~l_tau & ~l_nochoice].copy()
     d["condition"] = [f"B{b:.0f}" for b in d["block_index"]]
     d["task"] = task_type
     return d
 
 
-def get_bound_residuals(data_table, fits, group_col="condition", num_reps=20, max_dt=10, min_sim_trials=20,
-                        knots=KNOTS, ndt_values=NDT_VALUES, rng=None):
+def get_bound_residuals(
+    data_table,
+    fits,
+    group_col="condition",
+    num_reps=20,
+    max_dt=10,
+    min_sim_trials=20,
+    knots=KNOTS,
+    ndt_values=NDT_VALUES,
+    rng=None,
+):
     """
     Trial-by-trial deviation of the measured bound from the model's expected measured bound.
 
@@ -1467,23 +1697,32 @@ def get_bound_residuals(data_table, fits, group_col="condition", num_reps=20, ma
     if rng is None:
         rng = np.random.default_rng()
     have_fit = data_table.set_index(["subject_index", group_col]).index.isin(
-        fits.loc[fits["bound_scale"].notna()].set_index(["subject_index", "group"]).index)
+        fits.loc[fits["bound_scale"].notna()].set_index(["subject_index", "group"]).index
+    )
     d = data_table[have_fit & data_table["choice"].notna()]
-    sim = simulate_stopping_data_table(d, fits, group_col=group_col, knots=knots, ndt_values=ndt_values,
-                                       num_reps=num_reps, rng=rng)
+    sim = simulate_stopping_data_table(
+        d, fits, group_col=group_col, knots=knots, ndt_values=ndt_values, num_reps=num_reps, rng=rng
+    )
     sim = infer_bounds_like_data(sim)
-    ls = (get_good_trial_array(sim, min_trial_number=None) & np.isfinite(sim["bound"]) & (sim["bound"] != 0))
+    ls = get_good_trial_array(sim, min_trial_number=None) & np.isfinite(sim["bound"]) & (sim["bound"] != 0)
     sim = sim[ls].assign(dt_bin=lambda t: t["DT"].clip(upper=max_dt), log_abs=lambda t: np.log(t["bound"].abs()))
     g = sim.groupby(["subject_index", group_col, "dt_bin"])
-    expect = pd.DataFrame({"expected_abs_bound": g["abs_bound"].mean(),
-                           "expected_log_abs_bound": g["log_abs"].mean(), "n_sim": g.size()})
+    expect = pd.DataFrame(
+        {"expected_abs_bound": g["abs_bound"].mean(), "expected_log_abs_bound": g["log_abs"].mean(), "n_sim": g.size()}
+    )
     expect.loc[expect["n_sim"] < min_sim_trials, ["expected_abs_bound", "expected_log_abs_bound"]] = np.nan
 
-    key = pd.MultiIndex.from_arrays([data_table["subject_index"], data_table[group_col],
-                                     data_table["DT"].clip(upper=max_dt)])
+    key = pd.MultiIndex.from_arrays(
+        [data_table["subject_index"], data_table[group_col], data_table["DT"].clip(upper=max_dt)]
+    )
     e = expect.reindex(key)
-    out = pd.DataFrame({"expected_abs_bound": e["expected_abs_bound"].to_numpy(),
-                        "expected_log_abs_bound": e["expected_log_abs_bound"].to_numpy()}, index=data_table.index)
+    out = pd.DataFrame(
+        {
+            "expected_abs_bound": e["expected_abs_bound"].to_numpy(),
+            "expected_log_abs_bound": e["expected_log_abs_bound"].to_numpy(),
+        },
+        index=data_table.index,
+    )
     ab = data_table["bound"].abs().where(data_table["bound"] != 0)
     out["bound_residual"] = ab - out["expected_abs_bound"]
     with np.errstate(divide="ignore"):

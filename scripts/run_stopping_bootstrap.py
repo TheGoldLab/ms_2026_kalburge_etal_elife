@@ -29,8 +29,18 @@ PROCESSED = Path("data/processed")
 DATASETS = {"OL": [1, 2, 3, 4, 5, 6], "MX": [1, 2, 3]}
 SEED = 20261011
 NUM_REPS = 10
-PARAMS = ["bound_scale", "bound_cv", "guess_rate", "lapse_rate", "anticipation_rate",
-          "sensory_std", "ndt_p1", "log_h_start", "knee", "late_slope"]
+PARAMS = [
+    "bound_scale",
+    "bound_cv",
+    "guess_rate",
+    "lapse_rate",
+    "anticipation_rate",
+    "sensory_std",
+    "ndt_p1",
+    "log_h_start",
+    "knee",
+    "late_slope",
+]
 
 
 def log(msg):
@@ -49,13 +59,17 @@ def main():
         sim["subject_index"] = sim["subject_index"] * 100 + sim["rep"]
         t0 = time.time()
         f_fit = fit_stopping_models(sim, group_col="condition")
-        log(f"{task}: refit {f_fit.subject_index.nunique()} simulated sessions in {(time.time() - t0) / 60:.1f} min; "
-            f"{int((~f_fit.groupby('subject_index').success.first()).sum())} did not converge")
+        log(
+            f"{task}: refit {f_fit.subject_index.nunique()} simulated sessions in {(time.time() - t0) / 60:.1f} min; "
+            f"{int((~f_fit.groupby('subject_index').success.first()).sum())} did not converge"
+        )
         f_fit["rep"] = f_fit["subject_index"] % 100
         f_fit["subject_index"] = f_fit["subject_index"] // 100
         m = f_true[["subject_index", "group"] + PARAMS].merge(
-            f_fit[["subject_index", "group", "rep", "success"] + PARAMS], on=["subject_index", "group"],
-            suffixes=("_true", "_fit"))
+            f_fit[["subject_index", "group", "rep", "success"] + PARAMS],
+            on=["subject_index", "group"],
+            suffixes=("_true", "_fit"),
+        )
         out.append(m.assign(task=task))
     pd.concat(out, ignore_index=True).to_pickle(PROCESSED / "stopping_bootstrap.pkl")
     log("wrote data/processed/stopping_bootstrap.pkl")
