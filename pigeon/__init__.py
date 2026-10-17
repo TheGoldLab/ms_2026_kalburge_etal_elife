@@ -15,8 +15,7 @@ stopping
     stopping-model trial selection. The basis of Figures 3-6.
 
 adaptation
-    Within-block adaptation time constants (tau; Figure 4 and the
-    adaptation-transient exclusion of the stopping-model trials) and the
+    Within-block adaptation time constants (tau; Figure 4) and the
     trial-to-trial structure of the bound (Figure 3 Supplement 4).
 
 simulation

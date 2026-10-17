@@ -12,8 +12,7 @@ history), and all were written to run from `notebooks/` (to run one from here, c
 | `Figure03S05_sequentialAnalysisPD` | Sequential structure of the bounds set in the predefined-bound task |
 | `Figure05S01_boundDiffByDT` | High − low SNR difference of measured bounds by DT |
 | `Figure07_biasCorrection` | Bias-correction example figure |
+| `Make_biasCorrection` | Bound bias-correction calibrations (`data/processed/archive/boundBiasCorrection*.mat`); used for the adaptation-transient exclusion until the stopping-model trials became trial ≥ 10 only |
 | `Table_slopeAnalyses` | Slopes of measured bound vs. DT and of Δbound vs. bound, all blocks |
-| `Make_RRMatrix`, `Test_cpData`, `Test_cpDesign` | Change-point analyses based on reward-rate gradients over pre-/post-change bound grids, and the SNR choice for the 2026 change-point task |
+| `Make_RRMatrix`, `Test_cpData` | Change-point analyses based on reward-rate gradients over pre-/post-change bound grids |
 | `Test_stoppingModel` | Development of the stopping model: recovery, variants, posterior checks |
-| `Test_trialQuality` | Congruence vs. RT, to separate decisions from guesses |
-| `Test_subjectRawData` | One change-point subject's bounds and trajectories, all four blocks |

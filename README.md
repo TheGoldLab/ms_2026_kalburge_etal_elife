@@ -39,11 +39,9 @@ are cached in `data/processed/` (not tracked by git). Run scripts from the proje
 | 5 | `run_stopping_fits_cp_matched.py` (after 4) | `stopping_fits_cp_matched.pkl` | Fig 6 |
 | 5 | `run_cp_incentive_sims.py` (after 4) | `cp_incentive_step.pkl`, `cp_incentive_slope.pkl` | Fig 6 |
 
-`notebooks/Make_biasCorrection.ipynb` builds the bound bias-correction calibrations
-(`boundBiasCorrection.mat`, `boundBiasCorrection_CP.mat`, tracked in git, about 30 min). They
-correct the direct (per-trial) bound measure, which sets the adaptation time constants and thus the
-adaptation transient that every stopping-model fit leaves out; rerun it only if the bound
-estimator changes.
+The bound bias correction (`pigeon.data.apply_bias_corrections`) is archived: no figure uses the
+corrected bound (the stopping model works on raw positions), so `notebooks/archive/Make_biasCorrection.ipynb`
+and its calibrations (`data/processed/archive/boundBiasCorrection*.mat`) are kept for reference only.
 
 Run a notebook from `notebooks/`, e.g.
 `OMP_NUM_THREADS=1 uv run jupyter nbconvert --to notebook --execute --inplace Figure03_boundSummary.ipynb`.
@@ -71,9 +69,11 @@ Figures are saved (PDF and PNG) to `../Figures`.
 | `Figure05S02_RRMapExploration` | Reward rate of collapsing vs. flat vs. rising bounds in mixed-SNR blocks |
 | `Figure05S03_blockedSNRPD` | Low- vs. high-SNR bounds in the predefined-bound task (Figure 5's top row for PD) |
 | `Figure06_cpSummary` | Change-point task: anticipation and step of the bound vs. matched fixed blocks, with reward-rate incentives |
-| `Make_biasCorrection` | Bound bias-correction calibrations (see Pipeline) |
 | `Test_NDT` | How `get_bounds` estimates the NDT |
 | `Test_boundDefinition` | How `get_bounds` defines the bound at the commit step (peak-step rule) |
+| `Test_trialQuality` | Congruence vs. RT: why the shortest trials are filtered from the direct bound measure |
+| `Test_subjectRawData` | One change-point subject's bounds and step trajectories, all four blocks |
+| `Test_cpDesign` | How the SNRs of the 2026 change-point cohort (0.2 and 0.6) were chosen |
 | `Test_cpRDesign` | Ideal-observer bounds for the reward-change (RC) task design |
 
 `notebooks/archive/` holds notebooks that no longer produce a figure (see its README).

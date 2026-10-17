@@ -3,7 +3,12 @@
 import numpy as np
 import pandas as pd
 
-from pigeon.adaptation import get_post_error_bound_effect, get_sequential_bound_stats
+from pigeon.adaptation import (
+    between_block_significance,
+    compute_per_subject_curves_with_nulls,
+    get_post_error_bound_effect,
+    get_sequential_bound_stats,
+)
 
 
 def test_sequential_bound_stats_independent_vs_autocorrelated():
@@ -77,3 +82,32 @@ def test_post_error_bound_effect_needs_previous_trial_and_errors():
     st = get_post_error_bound_effect(d, min_post_error=1, min_trials=1)
     assert st.loc[(1, 1), "n_trials"] == 12 and st.loc[(1, 1), "n_post_error"] == 0
     assert np.isnan(st.loc[(1, 1), "post_error_effect"])
+
+
+def test_apply_quality_filter_keeps_wall_hits_and_short_trials():
+    # One subject, two blocks; every other trial is a wall hit with DT = 1, and only those trials carry the
+    # between-block change. The standard filter drops them; apply_quality_filter=False keeps them.
+    n = 40
+    rows = []
+    for block, shift in ((1, 0.0), (2, 0.3)):
+        l_odd = np.arange(n) % 2 == 1
+        rows.append(
+            pd.DataFrame(
+                {
+                    "subject_index": 1,
+                    "block_index": block,
+                    "trial_number": np.arange(1, n + 1),
+                    "abs_bound": np.where(l_odd, 0.3 + shift, 0.3) + np.linspace(0, 0.01, n),
+                    "DT": np.where(l_odd, 1, 3),
+                    "wall_hit": l_odd,
+                }
+            )
+        )
+    d = pd.concat(rows, ignore_index=True)
+    p_std, _ = between_block_significance(d, [1, 2])
+    p_all, sig_all = between_block_significance(d, [1, 2], apply_quality_filter=False)
+    assert p_std[0, 1] > 0.05 and p_all[0, 1] < 0.05 and sig_all[0, 1]
+    _, curves_std, _, _ = compute_per_subject_curves_with_nulls(d, 10, [1], n_perm=2)
+    _, curves_all, _, _ = compute_per_subject_curves_with_nulls(d, 10, [1], n_perm=2, apply_quality_filter=False)
+    # The z-scored curves differ because the kept trials differ.
+    assert not np.allclose(curves_std, curves_all, equal_nan=True)

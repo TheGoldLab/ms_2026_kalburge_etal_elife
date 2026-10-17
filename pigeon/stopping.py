@@ -114,7 +114,6 @@ import scipy.special
 import scipy.stats
 
 from .data import WALL, get_bounds, get_data_table, get_good_trial_array
-from .pathDefaults import BIAS_CORRECTION_CP_FILE, BIAS_CORRECTION_FILE
 
 NDT_VALUES = (1, 2)
 KNOTS = (1, 6, 16)
@@ -1582,18 +1581,16 @@ def infer_bounds_like_data(sim_table, max_ndt=5, peak_step_bound=True):
     return out
 
 
-def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclusion=True, verbose=True):
+def get_stopping_model_trials(task_type, blocks, min_trial_number=10, verbose=True):
     """
     Trials for stopping-model fits, following the paper's trial conventions.
 
     Loads the raw block numbering (``combine_snr=False``; OL and MX each have
-    six blocks run in order 1-6), keeps ``trial_number >= min_trial_number`` and
-    trials with a recorded choice (trials without one ran out of the block's
-    step budget), and, if ``tau_exclusion``, drops each subject's adaptation
-    transient: trials with ``trial_number < ceil(tau)`` in blocks where the
-    subject has a good adaptation fit (``get_adaptation_tau_fits`` on the
-    bias-corrected |bound|, 40-trial window). No DT cutoff, no wall-hit
-    exclusion, and positions are raw (no bias correction) for the model itself.
+    six blocks run in order 1-6) and keeps ``trial_number >= min_trial_number``
+    (leaving out the start-of-block adaptation transient) and trials with a
+    recorded choice (trials without one ran out of the block's step budget).
+    No DT cutoff, no wall-hit exclusion, and positions are raw (no bias
+    correction).
 
     Parameters
     ----------
@@ -1602,8 +1599,6 @@ def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclus
     blocks : sequence of int
         Raw block_index values to keep, in presentation order.
     min_trial_number : int
-    tau_exclusion : bool
-        Apply the adaptation-transient exclusion.
     verbose : bool
         Print the number of trials excluded by each criterion.
 
@@ -1612,30 +1607,18 @@ def get_stopping_model_trials(task_type, blocks, min_trial_number=10, tau_exclus
     pd.DataFrame (get_data_table columns plus ``condition`` = 'B<block>' and
     ``task``).
     """
-    from .adaptation import get_adaptation_tau_fits, get_tau_exclusion_mask
-
     blocks = list(blocks)
     d = get_data_table(task_type=task_type, combine_snr=False, correct_bias=None)
     d = d[d["block_index"].isin(blocks)]
     l_early = d["trial_number"] < min_trial_number
     l_nochoice = d["choice"].isna()
-    l_tau = pd.Series(False, index=d.index)
-    if tau_exclusion:
-        # MXSC's SNRs are covered only by the change-point calibration.
-        bias_file = BIAS_CORRECTION_CP_FILE if task_type == "MXSC" else BIAS_CORRECTION_FILE
-        dc = get_data_table(task_type=task_type, combine_snr=False, correct_bias=bias_file)
-        good_tau = get_adaptation_tau_fits(dc[dc["block_index"].isin(blocks)], blocks=blocks, max_trial=40)["good_tau"]
-        l_tau = ~get_tau_exclusion_mask(d, good_tau)
-        if verbose:
-            print(f"{task_type}: subjects with a good adaptation tau fit, by block: {good_tau.notna().sum().to_dict()}")
     if verbose:
         print(
             f"{task_type}: {len(d):,} trials in blocks {blocks}; excluded {l_early.sum():,} with "
-            f"trial_number < {min_trial_number}, {(l_tau & ~l_early).sum():,} more in the adaptation "
-            f"transient, {(l_nochoice & ~l_early & ~l_tau).sum():,} more with no choice; "
+            f"trial_number < {min_trial_number}, {(l_nochoice & ~l_early).sum():,} more with no choice; "
             f"{d['subject_index'].nunique()} subjects"
         )
-    d = d[~l_early & ~l_tau & ~l_nochoice].copy()
+    d = d[~l_early & ~l_nochoice].copy()
     d["condition"] = [f"B{b:.0f}" for b in d["block_index"]]
     d["task"] = task_type
     return d

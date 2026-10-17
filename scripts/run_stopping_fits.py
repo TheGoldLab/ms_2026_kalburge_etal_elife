@@ -8,8 +8,7 @@ per subject, so they run here rather than in the notebooks.
 
 Trials come from pigeon.stopping.get_stopping_model_trials: raw block
 numbering (OL blocks 1-6, each a single SNR; MX blocks 1-3, mixed SNR),
-trial_number >= 10, a recorded choice, and the adaptation-transient
-exclusion. Exclusions are printed.
+trial_number >= 10 and a recorded choice. Exclusions are printed.
 
 Run from the project root, detached:
 

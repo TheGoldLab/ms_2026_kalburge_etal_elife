@@ -8,8 +8,8 @@ Main pipeline
 -------------
 1. ``get_data_table`` — reads each subject's CSV file (one folder per task:
    OL, MX, PD, MXSC), calls ``get_bounds`` on the step sequences, optionally
-   relabels the six blocks of OL/MX/PD as three conditions, and applies
-   ``apply_bias_corrections``.
+   relabels the six blocks of OL/MX/PD as three conditions, and, if asked,
+   applies ``apply_bias_corrections``.
 2. ``get_bounds`` — from the step sequences infers each trial's bound (the
    position at the inferred commit step), DT (steps after the NDT), RT (total
    steps), the congruence curve used to estimate the NDT, and RT cutoffs.
@@ -17,7 +17,8 @@ Main pipeline
    trial_number ≥ 10, no wall hit, RT at or above the cutoff.
 4. ``apply_bias_corrections`` — corrects the measured bound for overshoot by
    inverting a simulated calibration table
-   (``notebooks/Make_biasCorrection.ipynb``).
+   (``notebooks/archive/Make_biasCorrection.ipynb``). Off by default: the
+   figures use raw bounds.
 5. ``get_bound_summary`` / ``get_performance_summary`` — per subject, block
    and SNR summaries of |bound|, accuracy and DT.
 
@@ -45,7 +46,7 @@ import numpy as np
 import pandas as pd
 import scipy.io
 
-from .pathDefaults import BIAS_CORRECTION_FILE, RAW_DATA_DIR
+from .pathDefaults import RAW_DATA_DIR
 
 WALL = 0.75  # screen-edge limit; trials where any step position reaches |WALL| are flagged wall_hit = True
 
@@ -55,7 +56,7 @@ def get_data_table(
     data_dir=RAW_DATA_DIR,
     blocks="all",
     combine_snr=True,
-    correct_bias=BIAS_CORRECTION_FILE,
+    correct_bias=None,
     max_ndt=5,
     peak_step_bound=True,
 ):
@@ -90,9 +91,11 @@ def get_data_table(
         high SNR), blocks 4-6 become 1-3; otherwise (MX: blocks 1-3 mix the
         two SNRs) blocks 4-6 are dropped.
     correct_bias : str, Path or None
-        Bias-correction calibration file for ``apply_bias_corrections``, or
-        None to skip. Ignored for 'PD' (the bound is set, not measured). For
-        'MXSC' the file must cover the data's SNRs (checked).
+        Bias-correction calibration file for ``apply_bias_corrections``
+        (``pathDefaults.BIAS_CORRECTION_FILE``, or ``BIAS_CORRECTION_CP_FILE``
+        for 'MXSC'), or None (default) for raw bounds. A missing file raises.
+        Ignored for 'PD' (the bound is set, not measured). For 'MXSC' the file
+        must cover the data's SNRs (checked).
     max_ndt : int
         Max NDT lag for the bound matrix (see get_bounds).
     peak_step_bound : bool
@@ -268,7 +271,9 @@ def get_data_table(
             # mixed: drop blocks 4-6
             data_table = data_table[data_table["block_index"] <= 3].reset_index(drop=True)
 
-    if correct_bias and task_type != "PD" and os.path.exists(correct_bias):
+    if correct_bias and task_type != "PD":
+        if not os.path.exists(correct_bias):
+            raise FileNotFoundError(f"bias-correction file not found: {correct_bias}")
         if is_cp:
             # The CP task's SNRs are fixed by its design, so its calibration must have been simulated at
             # exactly those SNRs.
@@ -743,7 +748,7 @@ def apply_bias_corrections(data_table, bias_file):
     """
     Correct measured bounds for the estimator's bias, from a simulated calibration table.
 
-    The calibration file (``notebooks/Make_biasCorrection.ipynb``) holds the
+    The calibration file (``notebooks/archive/Make_biasCorrection.ipynb``) holds the
     mean *measured* |bound| for each combination of true bound, DT bin and SNR
     bin (``boundSummary[true bound, DT - 1, SNR bin]``, true bounds
     ``simBounds``). The correction inverts this curve: given a measured bound

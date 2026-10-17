@@ -10,7 +10,7 @@ so the fixed blocks anchor the subject's within-trial collapse and any
 post-change-point term measures change beyond it.
 
 Trials come from pigeon.stopping.get_stopping_model_trials (trial_number >= 10,
-adaptation-transient exclusion, recorded choice). Exclusions are printed.
+recorded choice). Exclusions are printed.
 
 Run from the project root, detached:
 

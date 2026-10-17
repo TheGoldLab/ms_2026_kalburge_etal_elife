@@ -2,9 +2,7 @@
 Within-block adaptation time-constant (tau) fits, and trial-to-trial structure of the bound.
 
 The tau fits give the adaptation curves and tau insets of Figure04_RRvsBound
-and Figure04S01_RRvsBoundPD, and the adaptation transient that
-``pigeon.stopping.get_stopping_model_trials`` drops before every stopping-model
-fit (``get_tau_exclusion_mask``).
+and Figure04S01_RRvsBoundPD.
 
 Pipeline
 --------
@@ -109,7 +107,16 @@ def fit_exp_tau(trial_nums, z_vals, tau_max, min_valid=8):
 
 
 def compute_per_subject_curves_with_nulls(
-    data_table, max_trial, blocks, half_win=3, min_win=3, n_perm=1000, seed=123, value_col="abs_bound", zscore=True
+    data_table,
+    max_trial,
+    blocks,
+    half_win=3,
+    min_win=3,
+    n_perm=1000,
+    seed=123,
+    value_col="abs_bound",
+    zscore=True,
+    apply_quality_filter=True,
 ):
     """
     For every subject x block, computes the real smoothed z-scored bound curve plus
@@ -143,6 +150,11 @@ def compute_per_subject_curves_with_nulls(
         z-score the values within each subject x block before smoothing
         (default). False keeps their units (e.g. a log ratio, whose
         steady-state value is already ~0).
+    apply_quality_filter : bool
+        If True (default), use only trials passing get_good_trial_array's
+        standard filter (without its trial-number floor). False uses every
+        trial with a finite value, e.g. for the predefined-bound task, whose
+        bound is set rather than measured.
 
     Returns
     -------
@@ -164,7 +176,10 @@ def compute_per_subject_curves_with_nulls(
         # *is* the x-axis of the curve being fit here, so a floor of 10 would
         # remove the first 9 trials of every block and make it impossible to see
         # the early-trial settling dynamics this curve exists to characterize.
-        lg = get_good_trial_array(data_table, min_trial_number=None, block_index=block)
+        if apply_quality_filter:
+            lg = get_good_trial_array(data_table, min_trial_number=None, block_index=block)
+        else:
+            lg = data_table["block_index"] == block
         block_data = data_table[lg]
 
         for si, subj in enumerate(subjects):
@@ -251,7 +266,7 @@ def group_null_band(perm_curves, alpha=0.05):
     return np.percentile(max_stat, 100 * (1 - alpha), axis=0)
 
 
-def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
+def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5, apply_quality_filter=True):
     """
     Per-subject test of whether steady-state |bound| differs between block[i-1] and
     block[i] (i = 1 .. len(blocks)-1): an unpaired, two-sided Mann-Whitney U test on
@@ -270,6 +285,9 @@ def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
     min_trials : int
         Minimum trials required in each of the two compared blocks for a
         subject to be tested. Default 5.
+    apply_quality_filter : bool
+        If True (default), the trials passing get_good_trial_array's default
+        filter; False, every trial with trial_number >= 10 and a finite |bound|.
 
     Returns
     -------
@@ -282,7 +300,12 @@ def between_block_significance(data_table, blocks, alpha=0.05, min_trials=5):
     pvals = np.full((n_subjects, n_blocks), np.nan)
     lsig = np.zeros((n_subjects, n_blocks), dtype=bool)
 
-    lg_by_block = {block: get_good_trial_array(data_table, block_index=block) for block in blocks}
+    if apply_quality_filter:
+        lg_by_block = {block: get_good_trial_array(data_table, block_index=block) for block in blocks}
+    else:
+        lg_by_block = {
+            block: (data_table["block_index"] == block) & (data_table["trial_number"] >= 10) for block in blocks
+        }
 
     for bi in range(1, n_blocks):
         lg_prev = lg_by_block[blocks[bi - 1]]
@@ -316,6 +339,7 @@ def get_adaptation_tau_fits(
     between_min_trials=5,
     value_col="abs_bound",
     zscore=True,
+    apply_quality_filter=True,
 ):
     """
     Fit within-block adaptation time constants (tau) per subject per block.
@@ -351,6 +375,9 @@ def get_adaptation_tau_fits(
         ``abs_bound``: it asks whether the steady-state bound changed between
         blocks, which a within-block residual (~0 at steady state in every
         block by construction) cannot answer.
+    apply_quality_filter : bool
+        Passed to compute_per_subject_curves_with_nulls and
+        between_block_significance (default True: the standard trial filter).
 
     Returns
     -------
@@ -389,10 +416,13 @@ def get_adaptation_tau_fits(
         seed=seed,
         value_col=value_col,
         zscore=zscore,
+        apply_quality_filter=apply_quality_filter,
     )
 
     _, sig_within = per_subject_significance(real_curves, perm_curves, alpha=alpha)
-    _, sig_between = between_block_significance(data_table, blocks, alpha=alpha, min_trials=between_min_trials)
+    _, sig_between = between_block_significance(
+        data_table, blocks, alpha=alpha, min_trials=between_min_trials, apply_quality_filter=apply_quality_filter
+    )
 
     # lhas_curve: does this subject/block have at least one finite curve point to
     # fit at all? Block 0's sig_within is already implicitly gated by this (see
@@ -425,34 +455,6 @@ def get_adaptation_tau_fits(
         "censored": lcensored,
         "good_tau": good_tau,
     }
-
-
-def get_tau_exclusion_mask(data_table, good_tau):
-    """
-    Keep-mask that drops each subject's adaptation transient at the start of a block.
-
-    For a subject with a good tau fit in a block, trials with
-    ``trial_number < ceil(tau)`` are dropped; subjects without a good fit
-    (ineligible, failed, or censored) keep all their trials.
-
-    Parameters
-    ----------
-    data_table : pd.DataFrame
-        Trials with ``subject_index``, ``block_index`` and ``trial_number``.
-    good_tau : pd.DataFrame
-        ``get_adaptation_tau_fits(...)['good_tau']`` (index subjects, columns
-        blocks; NaN where there is no good fit).
-
-    Returns
-    -------
-    pd.Series of bool, same index as data_table (True = keep).
-    """
-    tau_long = good_tau.stack().rename("tau")
-    tau_long.index.names = ["subject_index", "block_index"]
-    key = pd.MultiIndex.from_arrays([data_table["subject_index"], data_table["block_index"]])
-    tau = tau_long.reindex(key).to_numpy()
-    drop = np.isfinite(tau) & (data_table["trial_number"].to_numpy() < np.ceil(np.nan_to_num(tau)))
-    return pd.Series(~drop, index=data_table.index)
 
 
 def get_sequential_bound_stats(

@@ -26,9 +26,10 @@ if not RAW_DATA_DIR.exists():
 # ── Processed / derived data (stored with the project) ────────────────────────
 DATA_DIR = PROJECT_ROOT / "data" / "processed"
 
-# Bound-bias calibrations (notebooks/Make_biasCorrection.ipynb): cohorts 1 and 2, and the change-point task
-BIAS_CORRECTION_FILE = DATA_DIR / "boundBiasCorrection.mat"
-BIAS_CORRECTION_CP_FILE = DATA_DIR / "boundBiasCorrection_CP.mat"
+# Bound-bias calibrations (archived with notebooks/archive/Make_biasCorrection.ipynb; no figure uses them):
+# cohorts 1 and 2, and the change-point task
+BIAS_CORRECTION_FILE = DATA_DIR / "archive" / "boundBiasCorrection.mat"
+BIAS_CORRECTION_CP_FILE = DATA_DIR / "archive" / "boundBiasCorrection_CP.mat"
 
 # ── Figures output ─────────────────────────────────────────────────────────────
 # Shared Figures/ folder one level above the project root (i.e. a sibling of

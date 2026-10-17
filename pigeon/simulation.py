@@ -13,7 +13,7 @@ non-decision time (NDT) of whole steps later.
 Uses
 ----
 - ``simulate_trials`` (the walk itself): the bias calibration
-  (notebooks/Make_biasCorrection.ipynb), 1,000,000 trials per run.
+  (notebooks/archive/Make_biasCorrection.ipynb), 1,000,000 trials per run.
 - ``get_simulated_data_table`` (whole blocks under the task's step budget and
   reward rules, measured like real data): the reward rate of fixed bounds in
   Figure02S01, Figure04, Figure04S01 and Figure05.
