@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Docstrings**
 - NumPy-style (`Parameters`/`Returns` sections with dashed underlines) on every public function.
-- When a function is a direct port of MATLAB code, note the source file in the first lines (`Translated from getPigeon_bounds.m`) — keep doing this for anything still being ported.
+- When a function is a direct port of MATLAB code, note the source file in the first lines (`Translated from getPigeon_bounds.m`) — keep doing this for anything still being ported. The MATLAB originals are archived outside the repository, in `../Archive/matlab`.
 - Module docstrings describe the pipeline/algorithm in enough detail to avoid reading the whole file (see the tops of `data.py`, `simulation.py`), not just a one-line summary.
 
 **Comments**

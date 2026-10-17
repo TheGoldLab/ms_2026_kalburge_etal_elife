@@ -90,8 +90,6 @@ Figures are saved (PDF and PNG) to `../Figures`.
 | `tests/` | Tests of the package (`uv run pytest`) |
 | `data/` | The raw-data archive, and processed outputs in `data/processed/` |
 | `task/` | Task code participants ran: `OL-MX-PD/` (cohorts 1 and 2, predefined bound), `MXSC/` (change point), `RC/` (reward change, not yet collected); see each folder's README |
-| `matlab/` | The original MATLAB analysis pipeline, kept for reference; the Python package supersedes it |
-| `pilot/` | Pilot task and analysis code that predate the data collection, kept for reference |
 
 Raw data (unpacked into `../Data/Raw/Human/`): one folder of per-subject CSVs per task: `OL`
 (cohort 1, blocked SNR), `MX` (cohort 2, mixed SNR), `PD` (predefined bound), `MXSC` (change
