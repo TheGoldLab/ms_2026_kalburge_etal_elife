@@ -1,4 +1,9 @@
-"""Tests for pigeon.simulation."""
+"""
+Tests for pigeon.simulation: the fixed-bound random-walk simulator and simulated data tables.
+
+Checks the RT convention (RT = crossing step + NDT + 1), NDT draws, per-SNR bounds, and that a
+simulated block obeys the task's step budget and coin rules.
+"""
 
 import numpy as np
 
@@ -6,6 +11,7 @@ from pigeon.simulation import BLOCK_DEFAULTS, get_simulated_data_table, simulate
 
 
 def test_ndt_is_drawn_from_the_given_range():
+    """NDT is drawn from ndt_min..ndt_max and RT = crossing step + NDT + 1."""
     choices, rts, DV, _, ndts, _, _ = simulate_trials(
         generative_mean=0.15, num_trials=5000, bound_mean=0.3, ndt_min=1, ndt_max=3, rng=np.random.default_rng(0)
     )
@@ -16,6 +22,7 @@ def test_ndt_is_drawn_from_the_given_range():
 
 
 def test_per_snr_bounds_and_choices():
+    """Each SNR gets its own bound, and choices favor the correct side."""
     choices, _, _, bounds, _, snrs, _ = simulate_trials(
         generative_mean=[0.05, 0.15], num_trials=4000, bound_mean=[0.2, 0.4], rng=np.random.default_rng(1)
     )
@@ -25,6 +32,10 @@ def test_per_snr_bounds_and_choices():
 
 
 def test_simulated_block_respects_step_budget_and_rewards():
+    """
+    A simulated block stays within its step budget, and the final coin count follows the block's gain and loss
+    rules.
+    """
     t = get_simulated_data_table(
         {"num_subjects": 3, "blocks": [2]}, generative_mean=0.05, bound_mean=0.2, rng=np.random.default_rng(2)
     )
@@ -37,6 +48,7 @@ def test_simulated_block_respects_step_budget_and_rewards():
 
 
 def test_ndt_probabilities_and_zero_ndt():
+    """NDT probabilities are honored, and NDT 0 means the response comes on the crossing step."""
     _, _, _, _, ndts, _, _ = simulate_trials(
         generative_mean=0.15,
         num_trials=20000,

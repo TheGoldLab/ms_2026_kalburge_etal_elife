@@ -1,4 +1,10 @@
-"""Tests for pigeon.adaptation."""
+"""
+Tests for pigeon.adaptation: trial-to-trial structure of the bound and the adaptation curves.
+
+Each test builds a small synthetic data table whose answer is known by construction (independent
+vs. autocorrelated bounds, a planted post-error change, trials the quality filter should drop) and
+checks that the statistic recovers it. All run in well under a second.
+"""
 
 import numpy as np
 import pandas as pd
@@ -12,6 +18,10 @@ from pigeon.adaptation import (
 
 
 def test_sequential_bound_stats_independent_vs_autocorrelated():
+    """
+    Lag-1 correlation and the slope of the next change on the current bound separate independent from AR(1)
+    bounds; rows are shuffled, so trials must be ordered by trial_number.
+    """
     rng = np.random.default_rng(0)
     n = 4000
     iid = rng.normal(0.4, 0.1, n)
@@ -33,6 +43,7 @@ def test_sequential_bound_stats_independent_vs_autocorrelated():
 
 
 def test_sequential_bound_stats_min_trials():
+    """Subject-blocks with fewer than min_trials report their count but NaN statistics."""
     d = pd.DataFrame(
         {"subject_index": 1, "block_index": 1, "trial_number": range(5), "abs_bound": [0.1, 0.2, 0.3, 0.2, 0.1]}
     )
@@ -51,6 +62,10 @@ def _post_error_sequence(rng, n, effect, carry=0.5):
 
 
 def test_post_error_bound_effect_recovers_boost_despite_carryover():
+    """
+    A planted post-error increase is recovered, and no effect is found without one, even though errors follow low
+    bounds and bounds carry over between trials.
+    """
     rng = np.random.default_rng(2)
     rows = []
     for s, effect in ((1, 0.0), (2, 0.2)):
@@ -75,6 +90,7 @@ def test_post_error_bound_effect_recovers_boost_despite_carryover():
 
 
 def test_post_error_bound_effect_needs_previous_trial_and_errors():
+    """Trials whose previous trial is missing are not used, and with no errors the effect is NaN."""
     d = pd.DataFrame(
         {"subject_index": 1, "block_index": 1, "trial_number": [1, 2, 4, 5, 6] * 4, "abs_bound": 1.0, "correct": 1}
     )
@@ -85,6 +101,10 @@ def test_post_error_bound_effect_needs_previous_trial_and_errors():
 
 
 def test_apply_quality_filter_keeps_wall_hits_and_short_trials():
+    """
+    apply_quality_filter=False keeps wall hits and DT = 1 trials (as the PD analysis needs), so a change carried
+    only by those trials becomes detectable.
+    """
     # One subject, two blocks; every other trial is a wall hit with DT = 1, and only those trials carry the
     # between-block change. The standard filter drops them; apply_quality_filter=False keeps them.
     n = 40

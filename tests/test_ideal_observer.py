@@ -1,4 +1,10 @@
-"""Tests for pigeon.ideal_observer (reward-rate-optimal bounds by dynamic programming)."""
+"""
+Tests for pigeon.ideal_observer: reward-rate-optimal bounds by dynamic programming.
+
+The solver's answers are checked against properties that must hold (scaling both gain and loss
+leaves the policy unchanged; a larger trial cost raises the bound; the policy beats nearby flat
+bounds) and against a Monte Carlo simulation of the same task rules. Each test takes a few seconds.
+"""
 
 import numpy as np
 
@@ -26,6 +32,7 @@ def _simulated_reward_rate(
 
 
 def test_scaling_gain_and_loss_leaves_the_policy_unchanged():
+    """Tripling both gain and loss triples the reward rate but leaves the optimal bounds unchanged."""
     rho1, b1 = get_optimal_bounds(LOW)
     rho3, b3 = get_optimal_bounds(HIGH)
     np.testing.assert_allclose(b3, b1)
@@ -33,6 +40,10 @@ def test_scaling_gain_and_loss_leaves_the_policy_unchanged():
 
 
 def test_rising_reward_waits_out_the_switch_and_falling_reward_rushes_it():
+    """
+    With rising reward the optimal policy never responds before the switch; with falling reward the bound
+    collapses just before it and stays low after.
+    """
     sw = 9
     _, fixed = get_optimal_bounds(LOW)
     _, rising = get_optimal_bounds(LOW, HIGH, sw)
@@ -43,18 +54,21 @@ def test_rising_reward_waits_out_the_switch_and_falling_reward_rushes_it():
 
 
 def test_dynamic_programming_reward_rate_matches_simulation():
+    """The reward rate the solver reports matches a Monte Carlo simulation of its own policy within 3%."""
     for pre, post, sw in ((LOW, LOW, MAX_STEPS), (LOW, HIGH, 9), (HIGH, LOW, 9)):
         rho, bound = get_optimal_bounds(pre, post, sw)
         np.testing.assert_allclose(_simulated_reward_rate(bound, pre, post, sw), rho, rtol=0.03)
 
 
 def test_optimal_policy_beats_nearby_flat_bounds():
+    """Flat bounds 30% lower or 40% higher than the optimal bound earn less."""
     rho, bound = get_optimal_bounds(LOW)
     for scale in (0.7, 1.4):
         assert _simulated_reward_rate(np.full(MAX_STEPS, scale * bound[5]), LOW, LOW, MAX_STEPS) < rho
 
 
 def test_larger_trial_cost_raises_the_bound():
+    """Raising the cost of starting a trial and of an error raises the optimal bound."""
     _, cheap = get_optimal_bounds(LOW, start_cost=1, error_cost=0)
     _, costly = get_optimal_bounds(LOW, start_cost=20, error_cost=10)
     assert costly[5] > cheap[5]

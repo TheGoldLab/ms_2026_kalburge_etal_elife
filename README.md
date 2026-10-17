@@ -12,10 +12,18 @@ Kalburge I, Dallstream A, Josić K, Kilpatrick ZP, Ding L, Gold JI
 2. **Unpack the raw data**: `scripts/unpack_data.sh`. This extracts the frozen archive
    `data/pigeon_raw_human.tar.gz` into `../Data/Raw/Human` (a `Data/Raw/Human` directory next
    to this repo, not inside it), where `pigeon/pathDefaults.py` expects it. Safe to re-run.
+   The archive is de-identified: each participant is a code (`OL-S001`, `CP26-S012`, ...) in the
+   file name and the `participant` column, and Prolific IDs are removed.
 3. **Run the model fits** (below), then the figure notebooks.
 
-Tests: `uv run pytest`. Lint and format: `uv run ruff check`, `uv run ruff format` (package,
-scripts and tests).
+**Tests** (`tests/`, one file per package module; each file's docstring says what it covers):
+
+- `uv run pytest`: the fast tests (about 10 s). Run after any change to the package.
+- `uv run pytest -m slow`: the 13 stopping-model fit tests, which simulate data from known
+  parameters and check that the fits recover them (about an hour).
+- `uv run pytest -m ""`: everything.
+
+Lint and format: `uv run ruff check`, `uv run ruff format` (package, scripts and tests).
 
 ---
 
@@ -87,7 +95,7 @@ Figures are saved (PDF and PNG) to `../Figures`.
 | `pigeon/` | The analysis package (below) |
 | `notebooks/` | Figure, preprocessing and test notebooks |
 | `scripts/` | Model-fitting and simulation scripts (Pipeline) and `unpack_data.sh` |
-| `tests/` | Tests of the package (`uv run pytest`) |
+| `tests/` | Tests of the package (Setup) |
 | `data/` | The raw-data archive, and processed outputs in `data/processed/` |
 | `task/` | Task code participants ran: `OL-MX-PD/` (cohorts 1 and 2, predefined bound), `MXSC/` (change point), `RC/` (reward change, not yet collected); see each folder's README |
 

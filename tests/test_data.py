@@ -1,4 +1,10 @@
-"""Tests for pigeon.data."""
+"""
+Tests for pigeon.data: trial-level helpers on small hand-built tables with known answers.
+
+Covers the steps before the decision (signed toward the choice), the bias-correction inversion
+(``apply_bias_corrections``; no figure uses it, but it stays available), and the per-subject bound
+summary.
+"""
 
 import numpy as np
 import pandas as pd
@@ -7,6 +13,10 @@ from pigeon.data import get_steps_before_decision
 
 
 def test_steps_before_decision_signed_toward_choice():
+    """
+    Steps before the decision step are taken in reverse order and signed toward the choice; missing steps and
+    missing DT give NaN.
+    """
     d = pd.DataFrame(
         {
             "steps": [
@@ -28,6 +38,10 @@ def test_steps_before_decision_signed_toward_choice():
 
 
 def test_bias_correction_inverts_the_calibration_curve(tmp_path):
+    """
+    A measured bound maps back to the true bound through the calibration curve of its DT and SNR bin, with linear
+    extrapolation beyond the grid; trials without a DT are left uncorrected.
+    """
     import scipy.io
 
     from pigeon.data import apply_bias_corrections
@@ -51,6 +65,7 @@ def test_bias_correction_inverts_the_calibration_curve(tmp_path):
 
 
 def test_bound_summary_by_block_snr_and_dt():
+    """Mean, SD and count of |bound| per subject, block, |SNR| and DT, and pooled over SNR and DT."""
     from pigeon.data import get_bound_summary
 
     d = pd.DataFrame(

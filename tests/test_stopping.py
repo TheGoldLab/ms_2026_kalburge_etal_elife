@@ -1,4 +1,18 @@
-"""Tests for pigeon.stopping (trial-level stopping model)."""
+"""
+Tests for pigeon.stopping: the trial-level stopping model (likelihood, fitting, simulation, helpers).
+
+Most tests simulate trials from known parameters with ``simulate_stopping_trials`` and check that
+the likelihood prefers the truth and that ``fit_stopping_model`` recovers it within a tolerance
+set by the simulated sample size. The fit tests run real optimizations and take from ~15 s to
+~30 min each; they are marked ``slow`` and skipped by default:
+
+    uv run pytest              # fast tests only (seconds)
+    uv run pytest -m slow      # only the slow fit tests (about an hour)
+    uv run pytest -m ""        # everything
+
+Shared constants: ``TRUE`` (generating parameters), ``NDT_PROBS`` (P(NDT = 1), P(NDT = 2)) and
+``COLLAPSE`` (log h at the knots for the 'knots' time-course form).
+"""
 
 import numpy as np
 import pandas as pd
@@ -37,6 +51,10 @@ def _sim(n, gm, seed, **kw):
 
 
 def test_simulated_trials_follow_rt_convention():
+    """
+    Simulated trials follow the RT convention: RT = commit step + NDT + 1, anticipations at RT = 1, positions
+    start at 0.
+    """
     d = _sim(2000, 0.02, 0)
     assert (d["steps"].apply(len) == d["RT"]).all()
     assert (d["steps"].apply(lambda s: s[0]) == 0).all()
@@ -47,6 +65,7 @@ def test_simulated_trials_follow_rt_convention():
 
 
 def test_nll_is_lower_at_truth_than_perturbed():
+    """The negative log-likelihood is lowest at the generating parameters compared with each one perturbed."""
     d = _sim(3000, 0.02, 1, log_h=COLLAPSE)
     truth = {**TRUE, "ndt_probs": NDT_PROBS, "log_h": COLLAPSE}
     nll_true = stopping_model_nll(d, truth, group_col=None)
@@ -61,12 +80,15 @@ def test_nll_is_lower_at_truth_than_perturbed():
 
 
 def test_zero_sensory_noise_is_exact_crossing():
+    """With no sensory noise (exact crossings), the likelihood stays finite."""
     d = _sim(500, 0.02, 2, sensory_std=0.0)
     nll = stopping_model_nll(d, {**TRUE, "sensory_std": 0.0, "ndt_probs": NDT_PROBS}, group_col=None)
     assert np.isfinite(nll)
 
 
+@pytest.mark.slow
 def test_fit_recovers_parameters_and_time_course():
+    """The fit recovers the bound, guess rate, sensory noise, NDT and the 'knots' time course from 4000 trials."""
     d = _sim(4000, 0.02, 3, log_h=COLLAPSE)
     r = fit_stopping_model(d, group_col=None, smooth_penalty=0.0, time_course_form="knots")
     p = r["params"].iloc[0]
@@ -80,7 +102,9 @@ def test_fit_recovers_parameters_and_time_course():
     assert np.all(np.abs(fitted - true) < 0.03)
 
 
+@pytest.mark.slow
 def test_fit_recovers_change_point_shift():
+    """The post-change-point bound is recovered in both directions (LowHigh and HighLow blocks)."""
     d = pd.concat(
         [
             _sim(2500, 0.01, 4, change_point=6, generative_mean_post=0.03, bound_scale_post=0.13).assign(block_index=3),
@@ -94,7 +118,9 @@ def test_fit_recovers_change_point_shift():
     assert abs(p.loc[3, "bound_scale"] - 0.2) < 0.025
 
 
+@pytest.mark.slow
 def test_fit_recovers_post_change_point_slope():
+    """An extra post-change-point slope of the bound is recovered, and the likelihood prefers it to no slope."""
     d = _sim(4000, 0.01, 10, change_point=4, generative_mean_post=0.01, bound_scale_post=0.25, slope_post=-0.06).assign(
         block_index=3
     )
@@ -108,7 +134,9 @@ def test_fit_recovers_post_change_point_slope():
     assert abs(p["bound_scale_post"] - 0.25) < 0.04
 
 
+@pytest.mark.slow
 def test_fit_recovers_pre_change_point_slope_and_step():
+    """An anticipatory tilt before the change point and a step at it are recovered together."""
     # Anticipatory tilt anchored at the change point plus a step there: both recovered together.
     d = _sim(4000, 0.01, 11, change_point=10, generative_mean_post=0.03, bound_scale_post=0.14, slope_pre=0.05).assign(
         block_index=3
@@ -124,7 +152,9 @@ def test_fit_recovers_pre_change_point_slope_and_step():
     assert abs(p["bound_scale_post"] - 0.14) < 0.025
 
 
+@pytest.mark.slow
 def test_fit_recovers_start_anchored_pre_slope_with_varied_change_points():
+    """A tilt in elapsed steps is recovered when change points vary, and the matching anchor fits better."""
     # A tilt in elapsed steps (anchored at step 1) with change points from 4 to 13: the anchor matters only
     # when change points vary, and the matching anchor must fit better than the change-point anchor.
     cps = np.random.default_rng(12).integers(4, 14, 4000)
@@ -150,7 +180,9 @@ def test_fit_recovers_start_anchored_pre_slope_with_varied_change_points():
     assert abs(p["bound_scale"] - 0.2) < 0.025
 
 
+@pytest.mark.slow
 def test_wall_hit_trials_are_censored_not_misfit():
+    """Trials that reach the screen edge are censored, so the bound is recovered even when many trials hit the wall."""
     # Large steps: many trials reach the wall; the fit should still recover the bound.
     d = simulate_stopping_trials(
         3000, 0.15, 0.3, 0.4, 0.35, guess_rate=0.02, ndt_probs=NDT_PROBS, rng=np.random.default_rng(6)
@@ -160,7 +192,9 @@ def test_wall_hit_trials_are_censored_not_misfit():
     assert abs(r["params"]["bound_scale"].iloc[0] - 0.4) < 0.04
 
 
+@pytest.mark.slow
 def test_groups_without_post_data_report_nan_post():
+    """Blocks with no change point report NaN post-change parameters instead of an arbitrary value."""
     d = pd.concat(
         [
             _sim(300, 0.01, 7).assign(block_index=1),
@@ -173,13 +207,16 @@ def test_groups_without_post_data_report_nan_post():
 
 
 def test_fit_rejects_missing_choices():
+    """Trials without a recorded choice raise: trial selection is the caller's job."""
     d = _sim(50, 0.02, 9)
     d.loc[0, "choice"] = np.nan
     with pytest.raises(ValueError, match="missing choice"):
         fit_stopping_model(d, group_col=None)
 
 
+@pytest.mark.slow
 def test_shared_and_per_block_parameters():
+    """Per-block and shared parameters give the expected number of free parameters and of distinct fitted values."""
     d = pd.concat(
         [
             _sim(400, 0.01, 10, bound_scale=0.25).assign(block_index=1),
@@ -199,7 +236,12 @@ def test_shared_and_per_block_parameters():
     assert r["n_params"] == 2 * 2 + 3 + 1 + 1  # scale, cv per block; 3 rates; noise; NDT
 
 
+@pytest.mark.slow
 def test_fit_recovers_guess_time_course_with_flat_bound():
+    """
+    A guess rate that falls over the trial is recovered with a flat bound, and the likelihood prefers it to a
+    constant guess rate.
+    """
     early = np.array([1.5, 0.0, -0.5])  # logit-scale guess shift at KNOTS: more guessing early
     d = _sim(4000, 0.02, 12, log_g=early, guess_rate=0.04)
     truth = {**TRUE, "guess_rate": 0.04, "ndt_probs": NDT_PROBS, "log_g": early}
@@ -213,7 +255,12 @@ def test_fit_recovers_guess_time_course_with_flat_bound():
     assert abs(p["log_g_k16"] - early[2]) < 0.5
 
 
+@pytest.mark.slow
 def test_fit_recovers_knee_time_course():
+    """
+    The knee time course (start height, knee step, late slope) is recovered, and the likelihood prefers the true
+    knee.
+    """
     knee = (0.8, 3.5, -0.01)  # bound 2.2x higher at step 1, knee at step 3.5, slight late decline
     d = _sim(4000, 0.02, 13, knee_shape=knee)
     truth = {**TRUE, "ndt_probs": NDT_PROBS, **dict(zip(("log_h_start", "knee", "late_slope"), knee))}
@@ -234,7 +281,9 @@ def test_fit_recovers_knee_time_course():
     )
 
 
+@pytest.mark.slow
 def test_knee_multi_start_keeps_the_best_start():
+    """With a late knee, the multi-start fit is at least as good as every single start and finds the knee."""
     # A late knee (7): the fit from several starting knees must do at least as well as every single start.
     d = _sim(1500, 0.02, 17, knee_shape=(0.8, 7.0, -0.01))
     kw = {"group_col": None, "time_course_form": "knee", "smooth_penalty": 0.0}
@@ -244,7 +293,12 @@ def test_knee_multi_start_keeps_the_best_start():
     assert abs(multi["params"].iloc[0]["knee"] - 7.0) < 1.5
 
 
+@pytest.mark.slow
 def test_fit_recovers_time_course_per_column_within_a_mixed_group():
+    """
+    Separate time-course shapes per SNR within one block are recovered from step 3 on, with one set of block
+    parameters; trial-level helpers reject such fits.
+    """
     # One block (one set of scale/CV/rates) with trials from two SNRs that differ only in time-course shape.
     lo = _sim(3000, 0.02, 15, knee_shape=(0.9, 4.0, -0.01)).assign(snr_level="lo")
     hi = _sim(3000, 0.04, 16, knee_shape=(0.2, 2.5, -0.03)).assign(snr_level="hi")
@@ -269,6 +323,10 @@ def test_fit_recovers_time_course_per_column_within_a_mixed_group():
 
 
 def test_commit_type_probabilities_are_calibrated():
+    """
+    The posterior probability that a commit was a guess averages to the true guess fraction and separates guesses
+    from bound crossings.
+    """
     d = _sim(6000, 0.02, 14, guess_rate=0.06, log_h=COLLAPSE).assign(subject_index=1, condition="B1")
     fit = pd.DataFrame(
         [
@@ -292,11 +350,13 @@ def test_commit_type_probabilities_are_calibrated():
 
 
 def test_plateau_at_limit_flags_both_limits():
+    """Plateaus at or within 2% of either fit limit are flagged; NaN is not."""
     f = pd.DataFrame({"bound_scale": [0.002, 0.00203, 0.05, 1.5, 1.97, 2.0, np.nan]})
     assert get_plateau_at_limit(f).tolist() == [True, True, False, False, True, True, False]
 
 
 def test_choice_probabilities_are_calibrated():
+    """Predicted P(right) is calibrated: within bins of the prediction, the fraction of right choices matches."""
     d = _sim(20000, 0.03, 18, log_h=COLLAPSE).assign(subject_index=1, condition="B1")  # bins need n >= ~150
     fit = pd.DataFrame(
         [
@@ -321,6 +381,7 @@ def test_choice_probabilities_are_calibrated():
 
 
 def test_true_crossed_flags_noise_triggered_commits():
+    """Without sensory noise every bound commit is a true crossing; with noise some are triggered early."""
     exact = _sim(3000, 0.02, 19, sensory_std=0.0, guess_rate=0.0)
     lb = exact.commit_type == "bound"
     assert exact.loc[lb, "true_crossed"].all()  # no noise: every bound commit is a true crossing
@@ -331,6 +392,10 @@ def test_true_crossed_flags_noise_triggered_commits():
 
 
 def test_commit_sources_priority():
+    """
+    Each commit gets one source, in priority order: guess, lapse, timing, sensory noise, measurement, collapsing
+    bound.
+    """
     up = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
     t = pd.DataFrame(
         {
@@ -353,7 +418,12 @@ def test_commit_sources_priority():
     ]
 
 
+@pytest.mark.slow
 def test_fit_with_fixed_shape_noise_and_ndt():
+    """
+    Fixed parameters stay fixed and are not counted as free; the late slope is recovered, and a flat late segment
+    fits worse.
+    """
     knee = (0.8, 3.5, -0.03)
     d = _sim(3000, 0.02, 21, knee_shape=knee)
     fixed = {"log_h_start": knee[0], "knee": knee[1], "sensory_std": TRUE["sensory_std"], "ndt_probs": NDT_PROBS}
@@ -367,6 +437,7 @@ def test_fit_with_fixed_shape_noise_and_ndt():
 
 
 def test_simulated_data_table_keeps_trial_order():
+    """Simulating from fits keeps each subject's real trial numbers and order, once per repetition."""
     d = pd.DataFrame(
         {
             "subject_index": 1,
