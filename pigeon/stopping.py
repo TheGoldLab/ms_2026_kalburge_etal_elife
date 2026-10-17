@@ -807,6 +807,7 @@ def fit_stopping_model(
     time_course_col=None,
     knee_starts=KNEE_STARTS,
     pre_slope_anchor="change_point",
+    group_gradient=True,
 ):
     """
     Maximum-likelihood fit of the stopping model to one subject's trials.
@@ -902,6 +903,13 @@ def fit_stopping_model(
         bound at the change point is ``bound_scale * h``) or ``slope_pre * (j - 1)``
         (the bound at step 1 is ``bound_scale * h``; depends on elapsed steps
         only), at steps before the change point.
+    group_gradient : bool
+        Compute the finite-difference gradient group by group (default): a
+        parameter that belongs to one group changes only that group's trials,
+        so only they are recomputed. The same forward differences as scipy's
+        default (step ``sqrt(eps) * max(1, |x|)``), at a fraction of the cost
+        when there are several groups. False lets scipy difference the whole
+        objective.
 
     Returns
     -------
@@ -984,24 +992,28 @@ def fit_stopping_model(
     else:
         x0s = [x0]
 
-    def objective(theta):
-        p = lay.unpack(theta)
+    def nll_of(p, idx=None):
+        """Negative log-likelihood of all trials, or of the trials in ``idx``."""
+        if idx is None:
+            idx = slice(None)
         lik = _trial_likelihood(
-            x,
-            lens,
-            choice_pm,
-            group_idx,
-            post_mask,
+            x[idx],
+            lens[idx],
+            choice_pm[idx],
+            group_idx[idx],
+            post_mask[idx],
             p,
             knots,
             ndt_values,
             p["ndt_probs"],
             n_quad=n_quad,
             wall=wall,
-            shape_idx=tc_idx,
+            shape_idx=None if tc_idx is None else tc_idx[idx],
             pre_slope_anchor=pre_slope_anchor,
         )
-        nll = -np.sum(np.log(np.maximum(lik, _MIN_LIK)))
+        return -np.sum(np.log(np.maximum(lik, _MIN_LIK)))
+
+    def penalty_of(p):
         if lay.knee:
             tc_pen = np.sum(p["log_h_start"] ** 2) + np.sum((10 * p["late_slope"]) ** 2)
         else:
@@ -1013,14 +1025,60 @@ def fit_stopping_model(
             + np.sum((10 * p["slope_post"]) ** 2)
             + np.sum((10 * p["slope_pre"]) ** 2)
         )
-        return nll + smooth_penalty * penalty, nll
+        return smooth_penalty * penalty
 
+    def objective(theta):
+        p = lay.unpack(theta)
+        nll = nll_of(p)
+        return nll + penalty_of(p), nll
+
+    # Group that each free parameter belongs to (-1: it affects every trial).
+    owner = []
+    per_group_shapes = time_course == "per_group" and tc_idx is None
+    for name, size, _ in lay.spec:
+        own = size == G and (
+            name in GROUP_PARAMS
+            or name.endswith("_post")
+            or name == "slope_pre"
+            or (name in KNEE_PARAMS and per_group_shapes)
+        )
+        if own:
+            owner += list(range(G))
+        elif (name == "log_h" and per_group_shapes and lay.n_shapes == G) or (name == "log_g" and lay.n_gshapes == G):
+            owner += list(np.repeat(np.arange(G), lay.n_free_h))
+        else:
+            owner += [-1] * size
+    owner = np.array(owner)
+    group_rows = [np.flatnonzero(group_idx == g) for g in range(G)]
+    upper = np.array([hi for _, hi in lay.limits()])
+    fd_step = np.sqrt(np.finfo(float).eps)
+
+    def objective_and_gradient(theta):
+        """Objective and its forward-difference gradient, recomputing only the trials a parameter affects."""
+        p = lay.unpack(theta)
+        nll_g = np.array([nll_of(p, rows) for rows in group_rows])
+        nll_all, pen = nll_g.sum(), penalty_of(p)
+        grad = np.empty(len(theta))
+        for i in range(len(theta)):
+            h = fd_step * max(1.0, abs(theta[i]))
+            if theta[i] + h > upper[i]:
+                h = -h
+            t2 = theta.copy()
+            t2[i] += h
+            p2 = lay.unpack(t2)
+            g = owner[i]
+            d_nll = nll_of(p2, group_rows[g]) - nll_g[g] if g >= 0 else nll_of(p2) - nll_all
+            grad[i] = (d_nll + penalty_of(p2) - pen) / h
+        return nll_all + pen, grad
+
+    use_groups = bool(group_gradient and G > 1 and np.any(owner >= 0))
     res = min(
         (
             scipy.optimize.minimize(
-                lambda t: objective(t)[0],
+                objective_and_gradient if use_groups else (lambda t: objective(t)[0]),
                 x,
                 method="L-BFGS-B",
+                jac=use_groups,
                 bounds=lay.limits(),
                 options={"maxfun": max_evals, "maxiter": max_evals},
             )
