@@ -395,7 +395,7 @@ def get_bounds(
     unrestricted argmax landing there almost certainly reflects estimation
     noise rather than a real value; restricting the search (rather than
     clamping an out-of-range answer) picks the best still-plausible lag
-    instead. Ties broken toward the largest lag. See notebooks/Test_NDT.ipynb
+    instead. Ties broken toward the largest lag. See notebooks/Explore_NDT.ipynb
     for the analysis behind this.
 
     Returns

@@ -77,12 +77,12 @@ Figures are saved (PDF and PNG) to `../Figures`.
 | `Figure05S02_RRMapExploration` | Reward rate of collapsing vs. flat vs. rising bounds in mixed-SNR blocks |
 | `Figure05S03_blockedSNRPD` | Low- vs. high-SNR bounds in the predefined-bound task (Figure 5's top row for PD) |
 | `Figure06_cpSummary` | Change-point task: anticipation and step of the bound vs. matched fixed blocks, with reward-rate incentives |
-| `Test_NDT` | How `get_bounds` estimates the NDT |
-| `Test_boundDefinition` | How `get_bounds` defines the bound at the commit step (peak-step rule) |
-| `Test_trialQuality` | Congruence vs. RT: why the shortest trials are filtered from the direct bound measure |
-| `Test_subjectRawData` | One change-point subject's bounds and step trajectories, all four blocks |
-| `Test_cpDesign` | How the SNRs of the 2026 change-point cohort (0.2 and 0.6) were chosen |
-| `Test_cpRDesign` | Ideal-observer bounds for the reward-change (RC) task design |
+| `Explore_NDT` | How `get_bounds` estimates the NDT |
+| `Explore_boundDefinition` | How `get_bounds` defines the bound at the commit step (peak-step rule) |
+| `Explore_trialQuality` | Congruence vs. RT: why the shortest trials are filtered from the direct bound measure |
+| `Explore_subjectRawData` | One change-point subject's bounds and step trajectories, all four blocks |
+| `Design_cpSNRs` | How the SNRs of the 2026 change-point cohort (0.2 and 0.6) were chosen |
+| `Design_rcTask` | Ideal-observer bounds for the reward-change (RC) task design |
 
 `notebooks/archive/` holds notebooks that no longer produce a figure (see its README).
 
@@ -93,7 +93,7 @@ Figures are saved (PDF and PNG) to `../Figures`.
 | Directory | Contents |
 |---|---|
 | `pigeon/` | The analysis package (below) |
-| `notebooks/` | Figure, preprocessing and test notebooks |
+| `notebooks/` | Figure notebooks; `Explore_` (analyses behind methods choices, data exploration) and `Design_` (task design) notebooks |
 | `scripts/` | Model-fitting and simulation scripts (Pipeline) and `unpack_data.sh` |
 | `tests/` | Tests of the package (Setup) |
 | `data/` | The raw-data archive, and processed outputs in `data/processed/` |

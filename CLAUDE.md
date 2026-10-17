@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Inline comments justify *why*, especially non-obvious math or a MATLAB-compatibility constraint (e.g. `simulation.py`'s NDT draw citing the exact MATLAB `randi` expression it reproduces). Don't add comments that restate the code.
 
 **Notebooks**
-- Filename pattern: `<Category><NN>[S<NN>]_<camelCaseDescription>.ipynb`. Categories: `Make_` (preprocessing), `Figure` (main figure), `FigureNNSNN_` (supplement, numbered under its parent figure), `Table_`, `Test_`. Number to match the paper.
+- Filename pattern: `<Category><NN>[S<NN>]_<camelCaseDescription>.ipynb`. Categories: `Figure` (main figure), `FigureNNSNN_` (supplement, numbered under its parent figure), `Explore_` (analyses behind a methods choice, and data exploration), `Design_` (task design), `Make_` / `Table_` (preprocessing / tables, none current). Number figures to match the paper. Superseded notebooks go to `notebooks/archive/`.
 - New analysis notebooks should call into `pigeon` rather than reimplementing bound inference, trial filtering, or summary stats inline — that duplication is exactly what the package exists to prevent.
 
 **Vectorization**

@@ -25,7 +25,7 @@ simulation
 ideal_observer
     Reward-rate-optimal bounds by dynamic programming, including a reward that
     switches at a fixed step of every trial (design of the RC task; used by
-    Test_cpRDesign). Imported directly (`from pigeon.ideal_observer import ...`).
+    Design_rcTask). Imported directly (`from pigeon.ideal_observer import ...`).
 
 plotting
     Shared figure style (fonts, sizes, colors, panel letters, p and rho
