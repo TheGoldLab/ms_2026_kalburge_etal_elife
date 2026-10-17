@@ -57,7 +57,8 @@ of time; no other cost per step), ``start_cost`` steps per trial (the trial star
 the mean non-decision time), ``error_cost`` more after an error; a trial still running
 at ``max_steps`` ends with a forced response (the likelier side). ``evaluate_bound``
 gives the reward rate of any given bound sequence with the same machinery, so the
-optimal policy can be compared exactly with, e.g., the best flat bound.
+optimal policy can be compared exactly with, e.g., the best flat bound
+(``get_best_flat_bound``).
 """
 
 from __future__ import annotations
@@ -309,3 +310,61 @@ def evaluate_bound(
     b = np.broadcast_to(np.asarray(bound, float), (max_steps + 1,)).copy()
     b[0] = np.inf
     return _solve_rho(model, gain, loss, error_cost, start_cost, bound=b)
+
+
+def get_best_flat_bound(
+    step_means,
+    weights,
+    gain: float = 1.0,
+    loss: float = 0.0,
+    error_cost: float = 0.0,
+    start_cost: float = 1.0,
+    step_std: float = MIX_STEP_STD,
+    max_steps: int = MIX_MAX_STEPS,
+    x_half_width: float = MIX_X_HALF_WIDTH,
+    dx: float = MIX_DX,
+    bound_min: float = 0.01,
+    bound_max: float = 1.2,
+    n_coarse: int = 13,
+    n_golden: int = 16,
+) -> tuple[float, float]:
+    """
+    Best flat bound and its reward rate, on the same grid and rules as get_optimal_bounds_mixture.
+
+    A coarse scan of ``n_coarse`` bounds between ``bound_min`` and ``bound_max`` brackets the
+    best one, and ``n_golden`` golden-section steps refine it within the neighboring scan
+    points (the reward rate of a flat bound is unimodal in the cases checked; the scan guards
+    against a poor bracket).
+
+    Returns
+    -------
+    bound : float
+        Best flat bound (|position|).
+    rho : float
+        Its reward rate, coins per step.
+    """
+    model = _MixtureModel(step_means, weights, step_std, max_steps, x_half_width, dx)
+
+    def rate(b):
+        seq = np.full(max_steps + 1, b)
+        seq[0] = np.inf
+        return _solve_rho(model, gain, loss, error_cost, start_cost, bound=seq)
+
+    grid = np.linspace(bound_min, bound_max, n_coarse)
+    rates = np.array([rate(b) for b in grid])
+    i = int(np.argmax(rates))
+    lo, hi = grid[max(i - 1, 0)], grid[min(i + 1, n_coarse - 1)]
+    g = (np.sqrt(5) - 1) / 2
+    x1, x2 = hi - g * (hi - lo), lo + g * (hi - lo)
+    f1, f2 = rate(x1), rate(x2)
+    for _ in range(n_golden):
+        if f1 < f2:
+            lo, x1, f1 = x1, x2, f2
+            x2 = lo + g * (hi - lo)
+            f2 = rate(x2)
+        else:
+            hi, x2, f2 = x2, x1, f1
+            x1 = hi - g * (hi - lo)
+            f1 = rate(x1)
+    best = max([(rates[i], grid[i]), (f1, x1), (f2, x2)])
+    return float(best[1]), float(best[0])

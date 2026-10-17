@@ -43,6 +43,7 @@ are cached in `data/processed/` (not tracked by git). Run scripts from the proje
 | 2 | `run_stopping_fits.py mx_by_snr` | `stopping_fits_mx_by_snr.pkl` | Fig 5 |
 | 3 | `run_stopping_bootstrap.py` (after 1) | `stopping_bootstrap.pkl` | Figs 3S1, 4 |
 | 3 | `run_stopping_late_slope.py` (after 1) | `stopping_late_slope.pkl` | Fig 5S1 |
+| 3 | `run_optimal_collapse.py` (after 1: reads the mean NDT) | `optimal_collapse.pkl` | Fig 5S2 |
 | 4 | `run_stopping_fits_cp.py cp_plateau_pair` | `stopping_fits_cp_plateau_pair.pkl` | step 5 |
 | 5 | `run_stopping_fits_cp_matched.py` (after 4) | `stopping_fits_cp_matched.pkl` | Fig 6 |
 | 5 | `run_cp_incentive_sims.py` (after 4) | `cp_incentive_step.pkl`, `cp_incentive_slope.pkl` | Fig 6 |
@@ -74,7 +75,7 @@ Figures are saved (PDF and PNG) to `../Figures`.
 | `Figure04S01_RRvsBoundPD` | The same for the predefined-bound task |
 | `Figure05_mixedVsBlockedSNR` | Low- vs. high-SNR bound plateaus, blocked vs. mixed SNR, on reward-rate surfaces |
 | `Figure05S01_collapseByCondition` | Late bound slope (after the fall) in every condition |
-| `Figure05S02_RRMapExploration` | Reward rate of collapsing vs. flat vs. rising bounds in mixed-SNR blocks |
+| `Figure05S02_optimalCollapse` | Optimal bound over the trial with zero-SNR trials mixed in, and its gain over the best flat bound (data: `scripts/run_optimal_collapse.py`) |
 | `Figure05S03_blockedSNRPD` | Low- vs. high-SNR bounds in the predefined-bound task (Figure 5's top row for PD) |
 | `Figure06_cpSummary` | Change-point task: anticipation and step of the bound vs. matched fixed blocks, with reward-rate incentives |
 | `Explore_NDT` | How `get_bounds` estimates the NDT |

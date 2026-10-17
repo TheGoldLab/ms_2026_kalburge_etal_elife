@@ -8,7 +8,13 @@ bounds) and against a Monte Carlo simulation of the same task rules. Each test t
 
 import numpy as np
 
-from pigeon.ideal_observer import MAX_STEPS, evaluate_bound, get_optimal_bounds, get_optimal_bounds_mixture
+from pigeon.ideal_observer import (
+    MAX_STEPS,
+    evaluate_bound,
+    get_best_flat_bound,
+    get_optimal_bounds,
+    get_optimal_bounds_mixture,
+)
 
 LOW, HIGH = (1, 1), (3, 3)
 
@@ -114,3 +120,14 @@ def test_evaluate_bound_never_beats_the_optimal_policy():
     rho, bound = get_optimal_bounds_mixture(*args, **kw)
     np.testing.assert_allclose(evaluate_bound(np.nan_to_num(bound, nan=np.inf), *args, **kw), rho, rtol=1e-4)
     assert evaluate_bound(0.2, *args, **kw) < rho
+
+
+def test_best_flat_bound_beats_its_neighbors_and_matches_the_optimum_without_zero_snr():
+    """The best flat bound earns more than bounds 20% lower or higher, and with one step mean it matches the optimal policy."""
+    args, kw = ([0.15], [1]), {"loss": 4, "start_cost": 2.4, "max_steps": 120}
+    b, rho = get_best_flat_bound(*args, **kw)
+    assert rho > evaluate_bound(0.8 * b, *args, **kw)
+    assert rho > evaluate_bound(1.2 * b, *args, **kw)
+    rho_opt, _ = get_optimal_bounds_mixture(*args, **kw)
+    assert rho <= rho_opt + 1e-9
+    np.testing.assert_allclose(rho, rho_opt, rtol=1e-3)
