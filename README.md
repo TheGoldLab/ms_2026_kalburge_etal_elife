@@ -67,8 +67,9 @@ Figures are saved (PDF and PNG) to `../Figures`.
 | `Figure04_RRvsBound` | Bound plateau vs. reward rate with the fixed-bound optimum; within-block adaptation |
 | `Figure04S01_RRvsBoundPD` | The same for the predefined-bound task |
 | `Figure05_mixedVsBlockedSNR` | Low- vs. high-SNR bound plateaus, blocked vs. mixed SNR, on reward-rate surfaces |
-| `Figure05S01_collapseByCondition` | The bound's time course and late collapse in every condition |
+| `Figure05S01_collapseByCondition` | Late bound slope (after the fall) in every condition |
 | `Figure05S02_RRMapExploration` | Reward rate of collapsing vs. flat vs. rising bounds in mixed-SNR blocks |
+| `Figure05S03_blockedSNRPD` | Low- vs. high-SNR bounds in the predefined-bound task (Figure 5's top row for PD) |
 | `Figure06_cpSummary` | Change-point task: anticipation and step of the bound vs. matched fixed blocks, with reward-rate incentives |
 | `Make_biasCorrection` | Bound bias-correction calibrations (see Pipeline) |
 | `Test_NDT` | How `get_bounds` estimates the NDT |
