@@ -8,7 +8,7 @@ bounds) and against a Monte Carlo simulation of the same task rules. Each test t
 
 import numpy as np
 
-from pigeon.ideal_observer import MAX_STEPS, get_optimal_bounds
+from pigeon.ideal_observer import MAX_STEPS, evaluate_bound, get_optimal_bounds, get_optimal_bounds_mixture
 
 LOW, HIGH = (1, 1), (3, 3)
 
@@ -72,3 +72,45 @@ def test_larger_trial_cost_raises_the_bound():
     _, cheap = get_optimal_bounds(LOW, start_cost=1, error_cost=0)
     _, costly = get_optimal_bounds(LOW, start_cost=20, error_cost=10)
     assert costly[5] > cheap[5]
+
+
+def _simulated_mixture_rate(bound, means, loss, error_cost, start_cost, max_steps, n=120_000, seed=0):
+    """Monte Carlo coins per step of a bound sequence over a mixture of step means (SD 0.15; mu = 0: coin flip)."""
+    rng = np.random.default_rng(seed)
+    coins = steps = 0.0
+    b = np.where(np.isnan(bound), np.inf, bound)
+    b[0] = np.inf
+    for mu in means:
+        k = n // len(means)
+        x = np.concatenate([np.zeros((k, 1)), np.cumsum(rng.normal(mu, 0.15, (k, max_steps)), axis=1)], axis=1)
+        hit = np.abs(x) >= b[None, :]
+        hit[:, -1] = True  # forced response at max_steps
+        tt = hit.argmax(1)
+        correct = x[np.arange(k), tt] > 0 if mu > 0 else rng.random(k) < 0.5
+        coins += np.where(correct, 1, -loss).sum()
+        steps += (tt + start_cost + error_cost * ~correct).sum()
+    return coins / steps
+
+
+def test_mixture_with_one_step_mean_matches_the_single_mean_solver():
+    """With a single step mean the mixture solver gives the same reward rate as get_optimal_bounds, and a flat bound."""
+    rho, bound = get_optimal_bounds_mixture([0.05], [1], loss=4, start_cost=1, max_steps=120)
+    rho_1, _ = get_optimal_bounds((1, 4), step_mean=0.05, step_std=0.15, start_cost=1, error_cost=0, max_steps=120)
+    np.testing.assert_allclose(rho, rho_1, rtol=1e-3)
+    assert np.ptp(bound[1:100]) <= 0.02  # flat up to the grid spacing (0.01), away from the forced response
+
+
+def test_mixture_reward_rate_matches_simulation_with_zero_snr_trials():
+    """The reward rate the mixture solver reports is what its policy earns in simulation, with zero-SNR trials mixed in."""
+    means = [0.0, 0.05, 0.15]
+    rho, bound = get_optimal_bounds_mixture(means, [1, 1, 1], error_cost=30, start_cost=2.4, max_steps=120)
+    np.testing.assert_allclose(_simulated_mixture_rate(bound, means, 0, 30, 2.4, 120), rho, rtol=0.03)
+
+
+def test_evaluate_bound_never_beats_the_optimal_policy():
+    """Evaluating the optimal bound as a fixed policy returns the optimal reward rate; a flat bound earns less."""
+    args = ([0.0, 0.05, 0.15], [1, 1, 1])
+    kw = {"error_cost": 30, "start_cost": 2.4, "max_steps": 60}
+    rho, bound = get_optimal_bounds_mixture(*args, **kw)
+    np.testing.assert_allclose(evaluate_bound(np.nan_to_num(bound, nan=np.inf), *args, **kw), rho, rtol=1e-4)
+    assert evaluate_bound(0.2, *args, **kw) < rho

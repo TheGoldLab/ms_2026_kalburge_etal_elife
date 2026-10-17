@@ -40,6 +40,24 @@ waiting (NaN where waiting is better at every position).
 
 Transitions use a fixed position grid with the predictive step density (a mixture of
 N(+mu, sigma) and N(-mu, sigma) weighted by the posterior), renormalized per row.
+
+Mixtures of step means (``get_optimal_bounds_mixture``)
+-------------------------------------------------------
+For trials whose step mean is drawn from a known set {mu_k} (with probabilities w_k, each
+direction equally likely; mu = 0 allowed, its correct side a coin flip), the posterior
+after t steps ending at x is
+
+    P(mu_k, +/- | x, t) proportional to w_k exp((+/- mu_k x - mu_k^2 t / 2) / sigma^2),
+
+so it depends on (x, t), and the optimal policy is a bound that may change with t.
+The predictive density of the next step mixes fixed Gaussian kernels N(+/- mu_k, sigma)
+with these weights, so E[V_{t+1}(x') | x, t] needs only one product per signed mean.
+Costs are those of Figure05S02's simulation: rho per waited step (the opportunity cost
+of time; no other cost per step), ``start_cost`` steps per trial (the trial start plus
+the mean non-decision time), ``error_cost`` more after an error; a trial still running
+at ``max_steps`` ends with a forced response (the likelier side). ``evaluate_bound``
+gives the reward rate of any given bound sequence with the same machinery, so the
+optimal policy can be compared exactly with, e.g., the best flat bound.
 """
 
 from __future__ import annotations
@@ -133,3 +151,161 @@ def get_optimal_bounds(
     right = x >= 0
     bound = np.array([x[right][s[right]].min() if s[right].any() else np.nan for s in stop])
     return rho, bound
+
+
+# Mixtures of step means (zero-SNR trials allowed); defaults are Figure05S02's task.
+MIX_STEP_STD = 0.15
+MIX_MAX_STEPS = 300
+MIX_X_HALF_WIDTH, MIX_DX = 4.0, 0.01
+
+
+class _MixtureModel:
+    """Grid, kernels and per-step posterior quantities for a mixture of step means."""
+
+    def __init__(self, step_means, weights, step_std, max_steps, x_half_width, dx):
+        means = np.asarray(step_means, float)
+        w = np.asarray(weights, float)
+        if means.shape != w.shape or np.any(means < 0) or np.any(w < 0):
+            raise ValueError("step_means and weights must be non-negative and the same length.")
+        w = w / w.sum()
+        self.x = np.arange(-x_half_width, x_half_width + dx / 2, dx)
+        self.max_steps = max_steps
+        # Signed means: (+mu, weight w/2) and (-mu, w/2); mu = 0 once with weight w.
+        signed, sw = [], []
+        for mu, wk in zip(means, w):
+            if mu == 0:
+                signed.append(0.0)
+                sw.append(wk)
+            else:
+                signed += [mu, -mu]
+                sw += [wk / 2, wk / 2]
+        self.signed = np.array(signed)
+        self.sw = np.array(sw)
+        off = self.x[None, :] - self.x[:, None]
+        self.kernels = []
+        for m in self.signed:
+            k = scipy.stats.norm.pdf(off, m, step_std)
+            self.kernels.append(k / k.sum(1, keepdims=True))  # renormalized: mass beyond the grid edge
+        self.var = step_std**2
+        self.post = np.stack([self.posterior(t) for t in range(max_steps + 1)])
+        self.pc = np.stack([self.p_correct(p) for p in self.post])
+
+    def posterior(self, t):
+        """(n_signed, n_x) posterior over signed means after t steps, at each grid position."""
+        logp = (
+            np.log(np.maximum(self.sw, 1e-300))[:, None]
+            + (self.signed[:, None] * self.x[None, :] - 0.5 * self.signed[:, None] ** 2 * t) / self.var
+        )
+        logp -= logp.max(0, keepdims=True)
+        p = np.exp(logp)
+        return p / p.sum(0, keepdims=True)
+
+    def p_correct(self, post):
+        """P(the likelier side is correct): mu > 0 favors right, mu < 0 left, mu = 0 is a coin flip."""
+        right = post[self.signed > 0].sum(0) + 0.5 * post[self.signed == 0].sum(0)
+        return np.maximum(right, 1 - right)
+
+
+def _mixture_values(model, rho, gain, loss, error_cost, bound=None):
+    """
+    Backward induction for one reward rate rho: value of a new trial at x = 0 (before the start
+    cost) and the stop mask. With ``bound`` given, the policy is fixed (respond when |x| >= bound[t]).
+    """
+    n = model.x.size
+    stop = np.ones((model.max_steps + 1, n), bool)  # forced response at max_steps
+    v = gain * model.pc[-1] - (loss + rho * error_cost) * (1 - model.pc[-1])
+    for tt in range(model.max_steps - 1, -1, -1):
+        pc = model.pc[tt]
+        respond = gain * pc - (loss + rho * error_cost) * (1 - pc)
+        wait = -rho + sum(p * (k @ v) for p, k in zip(model.post[tt], model.kernels))
+        s = respond >= wait if bound is None else np.abs(model.x) >= bound[tt]
+        if tt == 0:
+            s = np.zeros(n, bool)  # no response before the first step
+        stop[tt] = s
+        v = np.where(s, respond, wait)
+    return v[n // 2], stop
+
+
+def _solve_rho(model, gain, loss, error_cost, start_cost, bound=None, n_bisect=45):
+    lo, hi = -float(loss) - 1e-9, float(gain)  # a fixed policy can lose coins on average
+    for _ in range(n_bisect):
+        rho = (lo + hi) / 2
+        v0, _ = _mixture_values(model, rho, gain, loss, error_cost, bound)
+        lo, hi = (rho, hi) if v0 - rho * start_cost > 0 else (lo, rho)
+    return (lo + hi) / 2
+
+
+def get_optimal_bounds_mixture(
+    step_means,
+    weights,
+    gain: float = 1.0,
+    loss: float = 0.0,
+    error_cost: float = 0.0,
+    start_cost: float = 1.0,
+    step_std: float = MIX_STEP_STD,
+    max_steps: int = MIX_MAX_STEPS,
+    x_half_width: float = MIX_X_HALF_WIDTH,
+    dx: float = MIX_DX,
+) -> tuple[float, np.ndarray]:
+    """
+    Reward-rate-optimal bound at each step when the step mean is drawn from a mixture.
+
+    Parameters
+    ----------
+    step_means, weights : sequences of float
+        Magnitudes of the possible step means (0 allowed: zero-SNR trials) and their
+        probabilities (normalized); each direction is equally likely.
+    gain, loss : float
+        Coins gained for a correct response and lost for an error.
+    error_cost : float
+        Extra steps charged after an error (the step penalty).
+    start_cost : float
+        Steps charged per trial besides the decision steps: the trial start (1 in the task)
+        plus the mean non-decision time.
+    step_std : float
+        SD of each step, in screen units.
+    max_steps : int
+        Steps after which the observer must respond.
+    x_half_width, dx : float
+        Position grid (screen units).
+
+    Returns
+    -------
+    rho : float
+        Optimal reward rate, coins per step.
+    bound : (max_steps + 1,) array
+        Optimal bound (|position| at which to respond) at steps 0..max_steps; NaN where
+        waiting is optimal at every position on the grid (always at step 0).
+    """
+    model = _MixtureModel(step_means, weights, step_std, max_steps, x_half_width, dx)
+    rho = _solve_rho(model, gain, loss, error_cost, start_cost)
+    _, stop = _mixture_values(model, rho, gain, loss, error_cost)
+    right = model.x >= 0
+    bound = np.array([model.x[right][s[right]].min() if s[right].any() else np.nan for s in stop])
+    return rho, bound
+
+
+def evaluate_bound(
+    bound,
+    step_means,
+    weights,
+    gain: float = 1.0,
+    loss: float = 0.0,
+    error_cost: float = 0.0,
+    start_cost: float = 1.0,
+    step_std: float = MIX_STEP_STD,
+    max_steps: int = MIX_MAX_STEPS,
+    x_half_width: float = MIX_X_HALF_WIDTH,
+    dx: float = MIX_DX,
+) -> float:
+    """
+    Reward rate (coins per step) of responding at the first step t >= 1 with |x| >= bound[t]
+    (forced response at ``max_steps``), on the same grid and rules as get_optimal_bounds_mixture.
+
+    ``bound`` is a scalar (flat bound) or an array over steps 0..max_steps (step 0 is ignored:
+    no response before the first step).
+    """
+    model = _MixtureModel(step_means, weights, step_std, max_steps, x_half_width, dx)
+    b = np.broadcast_to(np.asarray(bound, float), (max_steps + 1,)).copy()
+    b[0] = np.inf
+    return _solve_rho(model, gain, loss, error_cost, start_cost, bound=b)
