@@ -48,6 +48,7 @@ are cached in `data/processed/` (not tracked by git). Run scripts from the proje
 | 4 | `run_stopping_fits_cp.py cp_plateau_pair` | `stopping_fits_cp_plateau_pair.pkl` | step 5 |
 | 5 | `run_stopping_fits_cp_matched.py` (after 4) | `stopping_fits_cp_matched.pkl` | Fig 6 |
 | 5 | `run_cp_incentive_sims.py` (after 4) | `cp_incentive_step.pkl`, `cp_incentive_slope.pkl` | Fig 6 |
+| 5 | `run_reward_incentives.py` (after 1 and 4: reads the mean NDTs) | `reward_incentives.pkl` | Fig 8 |
 
 The bound bias correction (`pigeon.data.apply_bias_corrections`) is archived: no figure uses the
 corrected bound (the stopping model works on raw positions), so `notebooks/archive/Make_biasCorrection.ipynb`
@@ -79,6 +80,7 @@ Figures are saved (PDF and PNG) to `../Figures`.
 | `Figure05S02_optimalCollapse` | Optimal bound over the trial with zero-SNR trials mixed in, and its gain over the best flat bound (data: `scripts/run_optimal_collapse.py`) |
 | `Figure05S03_blockedSNRPD` | Low- vs. high-SNR bounds in the predefined-bound task (Figure 5's top row for PD) |
 | `Figure06_cpSummary` | Change-point task: anticipation and step of the bound vs. matched fixed blocks, with reward-rate incentives |
+| `Figure08_rewardRateIncentives` | How many blocks an ideal participant would need to tell each bound policy from the best, with participants' bounds (penalty, mixed-SNR and change-point blocks); a slot for the reward-change task |
 | `Explore_NDT` | How `get_bounds` estimates the NDT |
 | `Explore_boundDefinition` | How `get_bounds` defines the bound at the commit step (peak-step rule) |
 | `Explore_trialQuality` | Congruence vs. RT: why the shortest trials are filtered from the direct bound measure |
@@ -116,5 +118,6 @@ point). `get_data_table(task_type=...)` reads the folder of that name.
 | `adaptation.py` | Within-block adaptation time constants (τ) and trial-to-trial structure of the bound |
 | `simulation.py` | Fixed-bound simulations of whole blocks (reward-rate benchmarks) and of single trials (bias calibration) |
 | `ideal_observer.py` | Reward-rate-optimal bounds by dynamic programming (RC task design) |
+| `incentives.py` | Reward-rate moments of bound policies (ideal participant) and their discriminability from the best policy within a block |
 | `plotting.py` | Shared figure style: fonts and sizes, color roles, panel letters, p and ρ formatting |
 | `pathDefaults.py` | All file and directory paths |
