@@ -169,7 +169,9 @@ class _MixtureModel:
         if means.shape != w.shape or np.any(means < 0) or np.any(w < 0):
             raise ValueError("step_means and weights must be non-negative and the same length.")
         w = w / w.sum()
-        self.x = np.arange(-x_half_width, x_half_width + dx / 2, dx)
+        # integer multiples of dx, so x = 0 is on the grid exactly (a bound of 0: respond at once)
+        n_half = round(x_half_width / dx)
+        self.x = dx * np.arange(-n_half, n_half + 1)
         self.max_steps = max_steps
         # Signed means: (+mu, weight w/2) and (-mu, w/2); mu = 0 once with weight w.
         signed, sw = [], []
@@ -323,7 +325,7 @@ def get_best_flat_bound(
     max_steps: int = MIX_MAX_STEPS,
     x_half_width: float = MIX_X_HALF_WIDTH,
     dx: float = MIX_DX,
-    bound_min: float = 0.01,
+    bound_min: float = 0.0,
     bound_max: float = 1.2,
     n_coarse: int = 13,
     n_golden: int = 16,
