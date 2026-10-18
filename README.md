@@ -23,7 +23,8 @@ Kalburge I, Dallstream A, Josić K, Kilpatrick ZP, Ding L, Gold JI
   parameters and check that the fits recover them (about an hour).
 - `uv run pytest -m ""`: everything.
 
-Lint and format: `uv run ruff check`, `uv run ruff format` (package, scripts and tests).
+Lint and format the package, scripts and tests only: `uv run ruff check --fix pigeon scripts tests`,
+`uv run ruff format pigeon scripts tests`. Without the paths, ruff also rewrites the notebooks and the task code.
 
 ---
 
