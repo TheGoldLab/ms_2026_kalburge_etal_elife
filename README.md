@@ -58,6 +58,9 @@ Run a notebook from `notebooks/`, e.g.
 `OMP_NUM_THREADS=1 uv run jupyter nbconvert --to notebook --execute --inplace Figure03_boundSummary.ipynb`.
 Figures are saved (PDF and PNG) to `../Figures`.
 
+Table 1 (task settings of every cohort and block, n started and finished) is built by
+`PYTHONPATH=. uv run python scripts/make_table1.py`, which writes `../Figures/Table01.xlsx`.
+
 ---
 
 ## Notebooks
