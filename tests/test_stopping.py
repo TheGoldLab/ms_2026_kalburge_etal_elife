@@ -28,6 +28,7 @@ from pigeon.stopping import (
     get_commit_sources,
     get_commit_type_probabilities,
     get_plateau_at_limit,
+    get_plateau_edge_fit,
     simulate_stopping_data_table,
     simulate_stopping_trials,
     stopping_model_nll,
@@ -353,6 +354,13 @@ def test_plateau_at_limit_flags_both_limits():
     """Plateaus at or within 2% of either fit limit are flagged; NaN is not."""
     f = pd.DataFrame({"bound_scale": [0.002, 0.00203, 0.05, 1.5, 1.97, 2.0, np.nan]})
     assert get_plateau_at_limit(f).tolist() == [True, True, False, False, True, True, False]
+
+
+def test_plateau_edge_fit():
+    """Edge fits are plateaus at a fit limit or above the screen edge (0.75); NaN is not."""
+    f = pd.DataFrame({"bound_scale": [0.002, 0.05, 0.75, 0.76, 1.5, 2.0, np.nan]})
+    assert get_plateau_edge_fit(f).tolist() == [True, False, False, True, True, True, False]
+    assert get_plateau_edge_fit(f, edge_max=0.8).tolist() == [True, False, False, False, True, True, False]
 
 
 def test_choice_probabilities_are_calibrated():

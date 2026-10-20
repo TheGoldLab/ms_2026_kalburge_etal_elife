@@ -313,6 +313,35 @@ def get_plateau_at_limit(fits, rtol=0.02):
     return (b <= lo * (1 + rtol)) | (b >= hi * (1 - rtol))
 
 
+# The pigeon cannot pass the screen edge, so a plateau above it is almost never what triggers a commit.
+PLATEAU_EDGE_MAX = WALL
+
+
+def get_plateau_edge_fit(fits, edge_max=PLATEAU_EDGE_MAX, rtol=0.02):
+    """
+    Flag edge fits: a bound plateau at a fit limit or above the screen edge.
+
+    Either way the subject's choices do not come from bound crossings (see
+    get_plateau_at_limit), so figures draw these subject-blocks at the panel
+    edge and leave them out of statistics (with counts reported). One
+    threshold for every figure (Figures 4, 5 and 5S2).
+
+    Parameters
+    ----------
+    fits : pd.DataFrame
+        Output of fit_stopping_models (``bound_scale`` column).
+    edge_max : float
+        Plateaus above this are edge fits (default: the screen edge, WALL).
+    rtol : float
+        Passed to get_plateau_at_limit.
+
+    Returns
+    -------
+    pd.Series of bool (index of fits); NaN plateaus are False.
+    """
+    return get_plateau_at_limit(fits, rtol=rtol) | (fits["bound_scale"] > edge_max)
+
+
 def bound_time_course(fit_row, steps, knots=KNOTS, post=False):
     """
     Mean bound at each step for one fitted group.
