@@ -2,11 +2,11 @@
 
 For every subject and condition (OL raw blocks 1-6; MX blocks 1-3 split by
 SNR), fits the stopping model to that condition's trials alone with the
-subject's start height, time of fall, sensory noise and NDT distribution fixed
+subject's start height, time of transition, sensory noise and NDT distribution fixed
 at their main fit (data/processed/stopping_fits_main.pkl). Free: the
 condition's plateau, bound CV, guess, lapse and anticipation rates, and the
-slope of the bound after the fall (late_slope). The null model is the same
-with late_slope fixed at 0 (bound flat after the fall). No smoothing penalty,
+slope of the bound after the transition (late_slope). The null model is the same
+with late_slope fixed at 0 (bound flat after the transition). No smoothing penalty,
 so 2 * (nll_null - nll_alt) is a likelihood-ratio statistic (chi-square, 1 df).
 
 Writes data/processed/stopping_late_slope.pkl, one row per subject x

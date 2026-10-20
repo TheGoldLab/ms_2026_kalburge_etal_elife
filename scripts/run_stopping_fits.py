@@ -28,6 +28,8 @@ Variants (default: main):
     flat_guess_tc   constant bound; guess rate varies over the trial (shared
                     shape per subject, fixed knots, same penalty as the bound)
     knee_flat       bound flat after the knee
+    fixed_cv        no trial-to-trial bound variability: bound_cv fixed at the
+                    fit's lower limit (0.03), so the variant nests in main
     mx_by_snr       MX only: every per-block parameter separate per block x SNR
                     (groups 'B<block>_lo' / 'B<block>_hi')
     tc_by_snr       as main but one time-course shape per SNR (column
@@ -56,6 +58,9 @@ VARIANTS = {
     "no_noise": {"fixed": {"sensory_std": 0.0}},
     "flat_guess_tc": {"time_course": "flat", "guess_time_course": "shared"},
     "knee_flat": {"time_course_form": "knee", "fixed": {"late_slope": 0.0}},
+    # 0.03 is the lower limit of the fitted CV (stopping._LOG_CV_LIMITS); smaller values make the gamma
+    # quadrature degenerate, and at 3% of the bound the variability is far below one pigeon step.
+    "fixed_cv": {"fixed": {"bound_cv": 0.03}},
     "mx_by_snr": {"group_col": "condition_snr", "tasks": ["MX"]},
     "tc_by_snr": {"time_course_col": "snr_level"},
 }
