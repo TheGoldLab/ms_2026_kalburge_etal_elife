@@ -74,6 +74,30 @@ MAX_STEPS = 50  # trial length (timeout) in the task
 X_HALF_WIDTH, X_POINTS = 1.2, 1201
 
 
+def get_fixed_time_accuracy(step_mean, step_std, num_steps):
+    """
+    Accuracy of an ideal observer that chooses the side of the pigeon after a fixed number of steps.
+
+    The position after n steps is N(n * mu, n * sigma^2), so P(correct) = Phi(mu * sqrt(n) / sigma).
+    The paper's "ideal accuracy after 1 s" is this at 5 steps (200 ms per step in cohorts 1-3).
+
+    Parameters
+    ----------
+    step_mean : float or array-like
+        |Step mean| (mu).
+    step_std : float or array-like
+        Step SD (sigma).
+    num_steps : int or array-like
+        Steps observed.
+
+    Returns
+    -------
+    float or numpy.ndarray
+        P(correct).
+    """
+    return scipy.stats.norm.cdf(np.asarray(step_mean) * np.sqrt(num_steps) / np.asarray(step_std))
+
+
 def _transition(x, mu, sigma):
     """Row-stochastic matrix of P(x' | x) on the grid, mixing the two drift directions by the posterior."""
     dx = x[1] - x[0]

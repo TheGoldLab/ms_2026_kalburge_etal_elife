@@ -12,6 +12,7 @@ from pigeon.ideal_observer import (
     MAX_STEPS,
     evaluate_bound,
     get_best_flat_bound,
+    get_fixed_time_accuracy,
     get_optimal_bounds,
     get_optimal_bounds_mixture,
 )
@@ -131,3 +132,10 @@ def test_best_flat_bound_beats_its_neighbors_and_matches_the_optimum_without_zer
     rho_opt, _ = get_optimal_bounds_mixture(*args, **kw)
     assert rho <= rho_opt + 1e-9
     np.testing.assert_allclose(rho, rho_opt, rtol=1e-3)
+
+
+def test_fixed_time_accuracy():
+    """Phi(mu sqrt(n) / sigma): the paper's 77%/99% (cohorts 1, 2) and 67%/91% (cohort 3) after 5 steps."""
+    acc = get_fixed_time_accuracy(np.array([0.05, 0.15, 0.01, 0.03]), np.array([0.15, 0.15, 0.05, 0.05]), 5)
+    assert np.allclose(np.round(100 * acc), [77, 99, 67, 91])
+    assert get_fixed_time_accuracy(0.0, 0.15, 5) == 0.5
