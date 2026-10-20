@@ -52,7 +52,7 @@ after t steps ending at x is
 so it depends on (x, t), and the optimal policy is a bound that may change with t.
 The predictive density of the next step mixes fixed Gaussian kernels N(+/- mu_k, sigma)
 with these weights, so E[V_{t+1}(x') | x, t] needs only one product per signed mean.
-Costs are those of Figure05S02's simulation: rho per waited step (the opportunity cost
+Costs are those of Figure05S03's simulation: rho per waited step (the opportunity cost
 of time; no other cost per step), ``start_cost`` steps per trial (the trial start plus
 the mean non-decision time), ``error_cost`` more after an error; a trial still running
 at ``max_steps`` ends with a forced response (the likelier side). ``evaluate_bound``
@@ -154,7 +154,7 @@ def get_optimal_bounds(
     return rho, bound
 
 
-# Mixtures of step means (zero-SNR trials allowed); defaults are Figure05S02's task.
+# Mixtures of step means (zero-SNR trials allowed); defaults are Figure05S03's task.
 MIX_STEP_STD = 0.15
 MIX_MAX_STEPS = 300
 MIX_X_HALF_WIDTH, MIX_DX = 4.0, 0.01

@@ -16,7 +16,7 @@ stopping
 
 adaptation
     Within-block adaptation time constants (tau; Figure 4) and the
-    trial-to-trial structure of the bound (Figure 3 Supplement 4).
+    trial-to-trial structure of the bound (Figure 3 Supplement 5).
 
 simulation
     Fixed-bound simulations of the task (reward-rate benchmarks, bias

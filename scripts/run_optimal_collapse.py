@@ -1,5 +1,5 @@
 """
-Optimal vs. best flat bound in mixed-SNR blocks with zero-SNR trials mixed in (Figure05S02).
+Optimal vs. best flat bound in mixed-SNR blocks with zero-SNR trials mixed in (Figure05S03).
 
 For each penalty condition of the mixed-SNR task (BLOCK_DEFAULTS 1-3: no penalty, 4 coins,
 30 steps) and each share of zero-SNR trials (the rest split evenly between step means 0.05

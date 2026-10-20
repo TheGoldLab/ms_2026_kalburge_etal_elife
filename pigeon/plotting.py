@@ -38,7 +38,7 @@ OPTIMAL_COLOR = "tab:red"
 
 # Marker styles, as keyword arguments for ``ax.plot`` (``ax.scatter`` takes ``SUBJECT_SCATTER``).
 # Per-subject points are white with a black edge; single trials (many overlapping points, Figs 3B
-# and 3S5) are smaller open circles; fits excluded at a fit limit are gray crosses. Points beyond
+# and 3S4) are smaller open circles; fits excluded at a fit limit are gray crosses. Points beyond
 # the axis are drawn at the edge as triangles pointing off-scale: ``{**SUBJECT_MARKER, "marker": ">"}``
 # (or '<', '^', 'v').
 MARKER_SIZE = 5  # per-subject points (pt)
