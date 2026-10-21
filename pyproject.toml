@@ -14,6 +14,13 @@ dependencies = [
     "openpyxl>=3.1.5",
 ]
 
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "pigeon"   # import name; the distribution is pigeon-analysis
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
@@ -24,9 +31,5 @@ dev = [
 line-length = 120   # the length the existing code is written to
 
 [tool.pytest.ini_options]
-pythonpath = ["."]   # tests import the pigeon package from the project root
 markers = ["slow: real stopping-model fits (~15 s to ~30 min each); run with `uv run pytest -m slow`"]
 addopts = "-m 'not slow'"   # default run skips them; `-m slow` runs only them, `-m ""` runs everything
-
-[tool.ruff.lint.per-file-ignores]
-"pigeon/pathDefaults.py" = ["N999"]   # module name kept: every notebook imports pigeon.pathDefaults

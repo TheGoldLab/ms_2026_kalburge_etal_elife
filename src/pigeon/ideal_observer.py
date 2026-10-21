@@ -1,7 +1,7 @@
 """
 Reward-rate-optimal (ideal-observer) bounds for the pigeon task, by dynamic programming.
 
-Used to design the RC (reward change) task (task/RC; notebooks/Design_rcTask.ipynb):
+Used to design the RC (reward change) task (task/RC; notebooks/design/Design_rcTask.ipynb):
 which bound, step by step within a trial, maximizes coins per step in a step-budgeted
 block whose reward may switch at a fixed step of every trial.
 

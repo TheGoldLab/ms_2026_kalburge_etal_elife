@@ -31,7 +31,7 @@ plotting
     Shared figure style (fonts, sizes, colors, panel letters, p and rho
     formatting). Imported directly (`from pigeon.plotting import ...`).
 
-pathDefaults
+path_defaults
     All project-wide file and directory paths.
 
 Public API

@@ -12,7 +12,7 @@ trial_number >= 10 and a recorded choice. Exclusions are printed.
 
 Run from the project root, detached:
 
-    PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_fits.py [variant ...] \
+    nohup caffeinate -i uv run python scripts/run_stopping_fits.py [variant ...] \
         > data/processed/stopping_fits.log 2>&1 &
 
 Variants (default: main):

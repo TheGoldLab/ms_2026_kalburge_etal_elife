@@ -9,8 +9,8 @@ from pathlib import Path
 
 # ── Directory anchors ──────────────────────────────────────────────────────────
 
-_HERE = Path(__file__).resolve().parent  # pigeon/
-PROJECT_ROOT = _HERE.parent  # Code/
+_HERE = Path(__file__).resolve().parent  # src/pigeon/
+PROJECT_ROOT = _HERE.parent.parent  # Code/
 
 # ── Raw CSV data (frozen dataset, lives outside the repo) ──────────────────────
 # One flat folder of per-subject CSVs per task: MX/, MXSC/, OL/, PD/. Unpacked

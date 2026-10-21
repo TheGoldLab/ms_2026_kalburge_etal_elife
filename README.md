@@ -8,10 +8,11 @@ Kalburge I, Dallstream A, Josić K, Kilpatrick ZP, Ding L, Gold JI
 
 ## Setup
 
-1. **Install** (Python ≥ 3.13, with [uv](https://github.com/astral-sh/uv)): `uv sync`
+1. **Install** (Python ≥ 3.13, with [uv](https://github.com/astral-sh/uv)): `uv sync`. This installs
+   the `pigeon` package (in `src/pigeon/`, editable), so notebooks and scripts import it from anywhere.
 2. **Unpack the raw data**: `scripts/unpack_data.sh`. This extracts the frozen archive
    `data/pigeon_raw_human.tar.gz` into `../Data/Raw/Human` (a `Data/Raw/Human` directory next
-   to this repo, not inside it), where `pigeon/pathDefaults.py` expects it. Safe to re-run.
+   to this repo, not inside it), where `src/pigeon/path_defaults.py` expects it. Safe to re-run.
    The archive is de-identified: each participant is a code (`OL-S001`, `CP26-S012`, ...) in the
    file name and the `participant` column, and Prolific IDs are removed.
 3. **Run the model fits** (below), then the figure notebooks.
@@ -30,12 +31,12 @@ Lint and format the package, scripts and tests only: `uv run ruff check --fix pi
 
 ## Pipeline
 
-Figures 3–6 rest on a trial-level **stopping model** (`pigeon/stopping.py`): a bound that falls
+Figures 3–6 rest on a trial-level **stopping model** (`src/pigeon/stopping.py`): a bound that falls
 from a high start to a plateau and then declines slowly, varies from trial to trial, and is
 compared with the perceived (noisy) position, plus guesses, anticipations and lapses; the
 non-decision time (1 or 2 steps) is marginalized. Fits take hours, so they run as scripts and
 are cached in `data/processed/` (not tracked by git). Run scripts from the project root, e.g.
-`PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_fits.py > data/processed/stopping_fits.log 2>&1 &`.
+`nohup caffeinate -i uv run python scripts/run_stopping_fits.py > data/processed/stopping_fits.log 2>&1 &`.
 
 | Step | Script | Output (`data/processed/`) | Used by |
 |---|---|---|---|
@@ -54,16 +55,18 @@ The bound bias correction (`pigeon.data.apply_bias_corrections`) is archived: no
 corrected bound (the stopping model works on raw positions), so `notebooks/archive/Make_biasCorrection.ipynb`
 and its calibrations (`data/processed/archive/boundBiasCorrection*.mat`) are kept for reference only.
 
-Run a notebook from `notebooks/`, e.g.
-`OMP_NUM_THREADS=1 uv run jupyter nbconvert --to notebook --execute --inplace Figure03_boundSummary.ipynb`.
+Run a notebook in place, e.g.
+`OMP_NUM_THREADS=1 uv run jupyter nbconvert --to notebook --execute --inplace notebooks/figures/Figure03_boundSummary.ipynb`.
 Figures are saved (PDF and PNG) to `../Figures`.
 
 Table 1 (task settings of every cohort and block, n started and finished) is built by
-`PYTHONPATH=. uv run python scripts/make_table1.py`, which writes `../Figures/Table01.xlsx`.
+`uv run python scripts/make_table1.py`, which writes `../Figures/Table01.xlsx`.
 
 ---
 
 ## Notebooks
+
+In `notebooks/figures/` (`Figure` notebooks), `notebooks/explore/` (`Explore_`) and `notebooks/design/` (`Design_`).
 
 | Notebook | Contents |
 |---|---|
@@ -99,8 +102,8 @@ Table 1 (task settings of every cohort and block, n started and finished) is bui
 
 | Directory | Contents |
 |---|---|
-| `pigeon/` | The analysis package (below) |
-| `notebooks/` | Figure notebooks; `Explore_` (analyses behind methods choices, data exploration) and `Design_` (task design) notebooks |
+| `src/pigeon/` | The analysis package (below) |
+| `notebooks/` | `figures/` (one notebook per figure), `explore/` (analyses behind methods choices, data exploration), `design/` (task design), `archive/` (superseded) |
 | `scripts/` | Model-fitting and simulation scripts (Pipeline) and `unpack_data.sh` |
 | `tests/` | Tests of the package (Setup) |
 | `data/` | The raw-data archive, and processed outputs in `data/processed/` |
@@ -112,7 +115,7 @@ point). `get_data_table(task_type=...)` reads the folder of that name.
 
 ---
 
-## Package (`pigeon/`)
+## Package (`src/pigeon/`)
 
 | Module | Contents |
 |---|---|
@@ -123,4 +126,4 @@ point). `get_data_table(task_type=...)` reads the folder of that name.
 | `ideal_observer.py` | Reward-rate-optimal bounds by dynamic programming (RC task design) |
 | `incentives.py` | Reward-rate moments of bound policies (ideal participant) and their discriminability from the best policy within a block |
 | `plotting.py` | Shared figure style: fonts and sizes, color roles, panel letters, p and ρ formatting |
-| `pathDefaults.py` | All file and directory paths |
+| `path_defaults.py` | All file and directory paths |

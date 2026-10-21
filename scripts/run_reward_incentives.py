@@ -22,7 +22,7 @@ best policy's:
 Writes data/processed/reward_incentives.pkl. Run from the project root
 (about 25 minutes on 18 cores):
 
-    PYTHONPATH=. uv run python scripts/run_reward_incentives.py > data/processed/reward_incentives.log 2>&1
+    uv run python scripts/run_reward_incentives.py > data/processed/reward_incentives.log 2>&1
 """
 
 import pickle

@@ -46,7 +46,7 @@ import numpy as np
 import pandas as pd
 import scipy.io
 
-from .pathDefaults import RAW_DATA_DIR
+from .path_defaults import RAW_DATA_DIR
 
 WALL = 0.75  # screen-edge limit; trials where any step position reaches |WALL| are flagged wall_hit = True
 
@@ -92,7 +92,7 @@ def get_data_table(
         two SNRs) blocks 4-6 are dropped.
     correct_bias : str, Path or None
         Bias-correction calibration file for ``apply_bias_corrections``
-        (``pathDefaults.BIAS_CORRECTION_FILE``, or ``BIAS_CORRECTION_CP_FILE``
+        (``path_defaults.BIAS_CORRECTION_FILE``, or ``BIAS_CORRECTION_CP_FILE``
         for 'MXSC'), or None (default) for raw bounds. A missing file raises.
         Ignored for 'PD' (the bound is set, not measured). For 'MXSC' the file
         must cover the data's SNRs (checked).
@@ -395,7 +395,7 @@ def get_bounds(
     unrestricted argmax landing there almost certainly reflects estimation
     noise rather than a real value; restricting the search (rather than
     clamping an out-of-range answer) picks the best still-plausible lag
-    instead. Ties broken toward the largest lag. See notebooks/Explore_NDT.ipynb
+    instead. Ties broken toward the largest lag. See notebooks/explore/Explore_NDT.ipynb
     for the analysis behind this.
 
     Returns

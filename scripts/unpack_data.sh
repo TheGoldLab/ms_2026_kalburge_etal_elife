@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unpacks data/pigeon_raw_human.tar.gz into the external raw-data directory
-# that pathDefaults.RAW_DATA_DIR expects (../Data/Raw/Human relative to this
+# that path_defaults.RAW_DATA_DIR expects (../Data/Raw/Human relative to this
 # project's root). Idempotent: safe to re-run, skips if already unpacked.
 set -euo pipefail
 

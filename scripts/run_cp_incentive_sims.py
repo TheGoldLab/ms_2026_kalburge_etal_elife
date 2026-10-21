@@ -24,7 +24,7 @@ one seed, so the curves are smooth in the manipulated parameter.
 Writes data/processed/cp_incentive_step.pkl and cp_incentive_slope.pkl. Run from
 the project root (several minutes):
 
-    PYTHONPATH=. uv run python scripts/run_cp_incentive_sims.py > data/processed/cp_incentive_sims.log 2>&1
+    uv run python scripts/run_cp_incentive_sims.py > data/processed/cp_incentive_sims.log 2>&1
 """
 
 import time

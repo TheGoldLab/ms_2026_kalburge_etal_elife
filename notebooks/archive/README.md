@@ -3,7 +3,7 @@
 Notebooks that no longer produce a paper figure or a pipeline input. They are kept for reference and
 are not maintained: some import functions that have since been removed from `pigeon` (see git
 history), and all were written to run from `notebooks/` (to run one from here, change
-`sys.path.insert(0, '..')` to `'../..'` and `Path('../data/...')` to `Path('../../data/...')`).
+`Path('../data/...')` to `Path('../../data/...')`; the installed package needs no `sys.path` edit).
 
 | Notebook | What it was |
 |---|---|

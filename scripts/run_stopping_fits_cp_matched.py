@@ -30,7 +30,7 @@ step time.
 Writes data/processed/stopping_fits_cp_matched.pkl (one row per subject x
 block), for Figure06_cpSummary. Run from the project root (about a minute):
 
-    PYTHONPATH=. uv run python scripts/run_stopping_fits_cp_matched.py > data/processed/stopping_fits_cp_matched.log 2>&1
+    uv run python scripts/run_stopping_fits_cp_matched.py > data/processed/stopping_fits_cp_matched.log 2>&1
 """
 
 import time

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Naming**
 - Functions: snake_case, verb-first (`get_data_table`, `apply_bias_corrections`, `fit_exp_tau`). Module-private helpers get a leading underscore (`_compute_rt_cutoff`, `_build_window_matrix`).
-- Constants: UPPER_SNAKE_CASE (`WALL`, `MIN_BOUND`, `BLOCK_DEFAULTS`, the path constants in `pathDefaults.py`).
+- Constants: UPPER_SNAKE_CASE (`WALL`, `MIN_BOUND`, `BLOCK_DEFAULTS`, the path constants in `path_defaults.py`).
 - Boolean mask variables carry a MATLAB-inherited `l`-prefix instead of `is_`/`has_` names: `lg` (good-trial mask), and short combinable masks like `ls`, `lsb`, `lsnr`, `lrt`, `lc` that get ANDed together (`lg & ls & lsnr`) as filters narrow. Follow this pattern rather than introducing `is_valid`/`mask_x` names when editing `data.py` or `adaptation.py`.
 - Loop indices pair an abbreviation with its source collection: `si`/`subj` (subject), `bi`/`block`, `ni` or `mm` (SNR), `ri` (RT/DT bin), `dd` (DT bin), `ii`/`tt` (trial).
 - Domain abbreviations (`DT`, `RT`, `NDT`, `SNR`, `DV`) stay uppercase in DataFrame column names (`data_table["DT"]`, `data_table["RT"]`) but lowercase in local variables/params (`dts`, `rts`, `ndts`, `min_dt`) — match whichever context you're in, don't normalize one to the other.
@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Inline comments justify *why*, especially non-obvious math or a MATLAB-compatibility constraint (e.g. `simulation.py`'s NDT draw citing the exact MATLAB `randi` expression it reproduces). Don't add comments that restate the code.
 
 **Notebooks**
-- Filename pattern: `<Category><NN>[S<NN>]_<camelCaseDescription>.ipynb`. Categories: `Figure` (main figure), `FigureNNSNN_` (supplement, numbered under its parent figure), `Explore_` (analyses behind a methods choice, and data exploration), `Design_` (task design), `Make_` / `Table_` (preprocessing / tables, none current). Number figures to match the paper. Superseded notebooks go to `notebooks/archive/`.
+- Filename pattern: `<Category><NN>[S<NN>]_<camelCaseDescription>.ipynb`. Categories: `Figure` (main figure), `FigureNNSNN_` (supplement, numbered under its parent figure), `Explore_` (analyses behind a methods choice, and data exploration), `Design_` (task design), `Make_` / `Table_` (preprocessing / tables, none current). Number figures to match the paper. Notebooks live in subfolders by category: `notebooks/figures/` (`Figure`), `notebooks/explore/` (`Explore_`), `notebooks/design/` (`Design_`); superseded notebooks go to `notebooks/archive/`. The package is installed (`src/pigeon/`, via `uv sync`), so notebooks import `pigeon` directly with no `sys.path` edits.
 - New analysis notebooks should call into `pigeon` rather than reimplementing bound inference, trial filtering, or summary stats inline — that duplication is exactly what the package exists to prevent.
 
 **Vectorization**

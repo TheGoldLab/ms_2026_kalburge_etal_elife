@@ -10,10 +10,10 @@ with late_slope fixed at 0 (bound flat after the transition). No smoothing penal
 so 2 * (nll_null - nll_alt) is a likelihood-ratio statistic (chi-square, 1 df).
 
 Writes data/processed/stopping_late_slope.pkl, one row per subject x
-condition, for notebooks/Figure05S01_collapseByCondition.ipynb. Run from the
+condition, for notebooks/figures/Figure05S01_collapseByCondition.ipynb. Run from the
 project root:
 
-    PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_late_slope.py \
+    nohup caffeinate -i uv run python scripts/run_stopping_late_slope.py \
         > data/processed/stopping_late_slope.log 2>&1 &
 """
 

@@ -14,7 +14,7 @@ recorded choice). Exclusions are printed.
 
 Run from the project root, detached:
 
-    PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_fits_cp.py [variant ...] \
+    nohup caffeinate -i uv run python scripts/run_stopping_fits_cp.py [variant ...] \
         > data/processed/stopping_fits_cp.log 2>&1 &
 
 Variants (default: cp_plateau_pair):

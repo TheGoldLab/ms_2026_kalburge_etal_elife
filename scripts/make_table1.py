@@ -15,7 +15,7 @@ trial costs 1 step to start in every cohort.
 
 Writes ../Figures/Table01.xlsx (next to the figures). Run from the project root:
 
-    PYTHONPATH=. uv run python scripts/make_table1.py
+    uv run python scripts/make_table1.py
 """
 
 import pandas as pd
@@ -24,7 +24,7 @@ from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 
 from pigeon.data import get_data_table
-from pigeon.pathDefaults import FIGURES_DIR
+from pigeon.path_defaults import FIGURES_DIR
 from pigeon.simulation import BLOCK_DEFAULTS, BLOCK_DEFAULTS_PD
 
 OUT_FILE = FIGURES_DIR / "Table01.xlsx"

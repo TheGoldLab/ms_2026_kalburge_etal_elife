@@ -23,7 +23,7 @@ from concurrent.futures import ProcessPoolExecutor
 import pandas as pd
 
 from pigeon.ideal_observer import get_best_flat_bound, get_optimal_bounds_mixture
-from pigeon.pathDefaults import DATA_DIR
+from pigeon.path_defaults import DATA_DIR
 
 STEP_MEANS = [0.0, 0.05, 0.15]
 ZERO_SHARES = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 1 / 3]

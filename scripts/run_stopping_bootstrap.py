@@ -14,7 +14,7 @@ Writes data/processed/stopping_bootstrap.pkl (one row per subject x block x
 replicate, column ``rep``), used by Figure03S01 (parameter recovery) and
 Figure04 (error bars). Run from the project root (after run_stopping_fits.py main):
 
-    PYTHONPATH=. nohup caffeinate -i uv run python scripts/run_stopping_bootstrap.py \
+    nohup caffeinate -i uv run python scripts/run_stopping_bootstrap.py \
         > data/processed/stopping_bootstrap.log 2>&1 &
 """
 
