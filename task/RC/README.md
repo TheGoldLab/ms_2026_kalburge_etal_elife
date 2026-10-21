@@ -6,14 +6,20 @@ pile; the participant predicts which pile he'll end up at), meant to be deployed
 for the full task design and session flow.
 
 **Design.** Four 1000-step blocks, all at the same difficulty (step mean 0.01, SD 0.05).
-Every trial costs 5 steps to start, and every error costs 10 extra steps.
+Every trial costs 1 step to start (as in MXSC; not shown to participants), and every error costs 15
+extra steps. The error charge is the one cost participants need to weigh: without it the reward-rate
+optimum is to respond after 1–2 steps, which leaves the falling-reward block nothing to test; a start
+cost alone does the same job but costs more trials (notebooks/design/Design_rcTask.ipynb).
+
+Bonus targets are the simulated median coins per block (notebooks/design/Design_rcTask.ipynb, section 4),
+rounded to a multiple of 5, so about half of participants should reach each one.
 
 | Block (`tc_block_type`) | Coins (correct / error) | Bonus target |
 |---|---|---|
-| `fixed_low` | +1 / -1 (cactus icon) | 20 |
-| `fixed_high` | +3 / -3 (tree icon) | 60 |
-| `change_low` (rising reward) | +1 / -1, then +3 / -3 from the switch step on | 45 |
-| `change_high` (falling reward) | +3 / -3, then +1 / -1 from the switch step on | 45 |
+| `fixed_low` | +1 / -1 (cactus icon) | 25 |
+| `fixed_high` | +3 / -3 (tree icon) | 70 |
+| `change_low` (rising reward) | +1 / -1, then +3 / -3 from the switch step on | 55 |
+| `change_high` (falling reward) | +3 / -3, then +1 / -1 from the switch step on | 55 |
 
 The two fixed blocks run first in random order, then the two change blocks in random
 order (saved in the `block_order` column). The switch step is the participant's median

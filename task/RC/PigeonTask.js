@@ -758,8 +758,9 @@ async function experimentInit() {
           coins_string = ("Coins gained per correct choice = " + coins_gained_per_correct.toString()
               + "\nCoins lost per error choice = " + coins_lost_per_error.toString()
               + "\nTarget for bonus = " + coins_max.toString() + " coins");
+          // The 1 step charged to start each trial (as in MXSC) is not shown: only the error charge
+          // is a cost participants need to weigh.
           steps_string = ("Total steps budget = " + steps_max.toString()
-              + "\nSteps to start each trial = " + steps_taken_to_start_trial.toString()
               + "\nExtra steps lost per error = " + steps_lost_per_error.toString());
       }
       if (update_coins_bar) {
