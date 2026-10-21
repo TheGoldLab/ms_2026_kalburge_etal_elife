@@ -10,18 +10,31 @@ import numpy as np
 
 from pigeon.ideal_observer import (
     MAX_STEPS,
+    RC_ERROR_COST,
+    RC_START_COST,
     evaluate_bound,
+    evaluate_rc_bound,
     get_best_flat_bound,
     get_fixed_time_accuracy,
     get_optimal_bounds,
     get_optimal_bounds_mixture,
+    get_rc_policy_outcomes,
 )
 
 LOW, HIGH = (1, 1), (3, 3)
 
 
 def _simulated_reward_rate(
-    bound, reward_pre, reward_post, switch_step, mu=0.01, sigma=0.05, start_cost=5, error_cost=10, n=200_000, seed=0
+    bound,
+    reward_pre,
+    reward_post,
+    switch_step,
+    mu=0.01,
+    sigma=0.05,
+    start_cost=RC_START_COST,
+    error_cost=RC_ERROR_COST,
+    n=200_000,
+    seed=0,
 ):
     """Monte Carlo coins per step of a given bound policy under the task's rules (drift to the right)."""
     rng = np.random.default_rng(seed)
@@ -72,6 +85,35 @@ def test_optimal_policy_beats_nearby_flat_bounds():
     rho, bound = get_optimal_bounds(LOW)
     for scale in (0.7, 1.4):
         assert _simulated_reward_rate(np.full(MAX_STEPS, scale * bound[5]), LOW, LOW, MAX_STEPS) < rho
+
+
+def test_rc_bound_evaluation_matches_the_optimum_and_simulation():
+    """
+    evaluate_rc_bound gives the optimal policy the solver's reward rate, and a flat bound (a policy the
+    solver did not choose) the Monte Carlo reward rate within 3%, in a fixed and a falling-reward block.
+    """
+    rho, bound = get_optimal_bounds(HIGH, LOW, 9)
+    np.testing.assert_allclose(evaluate_rc_bound(bound, HIGH, LOW, 9), rho, rtol=1e-6)
+    for pre, post, sw in ((LOW, LOW, MAX_STEPS), (HIGH, LOW, 9)):
+        flat = np.full(MAX_STEPS, 0.2)
+        np.testing.assert_allclose(
+            evaluate_rc_bound(flat, pre, post, sw), _simulated_reward_rate(flat, pre, post, sw), rtol=0.03
+        )
+
+
+def test_rc_policy_outcomes_match_simulation():
+    """Accuracy and trials per 1000-step block of a flat bound match a Monte Carlo simulation of the task rules."""
+    bound, n = 0.15, 200_000
+    out = get_rc_policy_outcomes(bound)
+    rng = np.random.default_rng(1)
+    x = np.concatenate([np.zeros((n, 1)), np.cumsum(rng.normal(0.01, 0.05, (n, MAX_STEPS - 1)), axis=1)], axis=1)
+    hit = np.abs(x) >= bound
+    responded = hit.any(1)
+    tt = hit.argmax(1)
+    correct = responded & (x[np.arange(n), tt] > 0)
+    steps = np.where(responded, tt, MAX_STEPS) + RC_START_COST + RC_ERROR_COST * (responded & ~correct)
+    np.testing.assert_allclose(out["accuracy"], correct.sum() / responded.sum(), atol=0.01)
+    np.testing.assert_allclose(out["trials_per_block"], 1000 / steps.mean(), rtol=0.02)
 
 
 def test_larger_trial_cost_raises_the_bound():

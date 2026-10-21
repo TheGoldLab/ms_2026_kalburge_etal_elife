@@ -68,8 +68,8 @@ import scipy.stats
 
 RC_STEP_MEAN = 0.01  # RC task: one difficulty for every block (MXSC's low SNR)
 RC_STEP_STD = 0.05
-RC_START_COST = 5  # steps charged to start each trial
-RC_ERROR_COST = 10  # extra steps charged per error
+RC_START_COST = 1  # steps charged to start each trial (as in MXSC)
+RC_ERROR_COST = 15  # extra steps charged per error: the one cost that sets the optimal bound (Design_rcTask)
 MAX_STEPS = 50  # trial length (timeout) in the task
 X_HALF_WIDTH, X_POINTS = 1.2, 1201
 
@@ -110,17 +110,34 @@ def _transition(x, mu, sigma):
     return trans / trans.sum(1, keepdims=True), np.maximum(p_right, 1 - p_right)
 
 
-def _backward_induction(rho, p_correct, trans, reward_pre, reward_post, switch_step, error_cost, max_steps):
-    """Value of a new trial at x = 0 (before the start cost) and the stop mask, for one reward rate rho."""
+def _backward_induction(
+    rho, p_correct, trans, reward_pre, reward_post, switch_step, error_cost, max_steps, stop_given=None
+):
+    """
+    Value of a new trial at x = 0 (before the start cost) and the stop mask, for one reward rate rho.
+    With ``stop_given`` ((max_steps, n_x) bool) the policy is fixed instead of optimized.
+    """
     v = np.zeros(p_correct.size)  # t = max_steps: timeout, no coins
     stop = np.zeros((max_steps, p_correct.size), bool)
     for tt in range(max_steps - 1, -1, -1):
         gain, loss = reward_post if tt >= switch_step else reward_pre
         respond = gain * p_correct - (loss + rho * error_cost) * (1 - p_correct)
         wait = -rho + trans @ v
-        stop[tt] = respond >= wait
-        v = np.maximum(respond, wait)
+        stop[tt] = respond >= wait if stop_given is None else stop_given[tt]
+        v = np.where(stop[tt], respond, wait)
     return v[p_correct.size // 2], stop
+
+
+def _rc_grid(step_mean, step_std):
+    x = np.linspace(-X_HALF_WIDTH, X_HALF_WIDTH, X_POINTS)
+    trans, p_correct = _transition(x, step_mean, step_std)
+    return x, trans, p_correct
+
+
+def _bound_to_stop(x, bound):
+    """Stop mask of 'respond when |x| >= bound[t]' (NaN = never respond at that step)."""
+    b = np.where(np.isnan(bound), np.inf, np.asarray(bound, float))
+    return np.abs(x)[None, :] >= b[:, None] - 1e-12
 
 
 def get_optimal_bounds(
@@ -164,8 +181,7 @@ def get_optimal_bounds(
     """
     if reward_post is None or switch_step is None:
         reward_post, switch_step = reward_pre, max_steps
-    x = np.linspace(-X_HALF_WIDTH, X_HALF_WIDTH, X_POINTS)
-    trans, p_correct = _transition(x, step_mean, step_std)
+    x, trans, p_correct = _rc_grid(step_mean, step_std)
     args = (p_correct, trans, reward_pre, reward_post, switch_step, error_cost, max_steps)
     lo, hi = 0.0, float(max(reward_pre[0], reward_post[0]))  # rho can't exceed the largest gain per step
     for _ in range(n_bisect):
@@ -176,6 +192,109 @@ def get_optimal_bounds(
     right = x >= 0
     bound = np.array([x[right][s[right]].min() if s[right].any() else np.nan for s in stop])
     return rho, bound
+
+
+def evaluate_rc_bound(
+    bound,
+    reward_pre: tuple[float, float],
+    reward_post: tuple[float, float] | None = None,
+    switch_step: int | None = None,
+    step_mean: float = RC_STEP_MEAN,
+    step_std: float = RC_STEP_STD,
+    start_cost: float = RC_START_COST,
+    error_cost: float = RC_ERROR_COST,
+    max_steps: int = MAX_STEPS,
+    n_bisect: int = 60,
+) -> float:
+    """
+    Reward rate (coins per step) of a given bound policy under the rules of get_optimal_bounds.
+
+    Parameters
+    ----------
+    bound : float or (max_steps,) array
+        Respond when |position| >= bound[t] (a scalar is a flat bound; NaN = never respond at t).
+    reward_pre, reward_post, switch_step, step_mean, step_std, start_cost, error_cost, max_steps, n_bisect
+        As in get_optimal_bounds.
+
+    Returns
+    -------
+    float
+        Reward rate, coins per step (negative if the policy loses coins on average).
+    """
+    if reward_post is None or switch_step is None:
+        reward_post, switch_step = reward_pre, max_steps
+    x, trans, p_correct = _rc_grid(step_mean, step_std)
+    stop = _bound_to_stop(x, np.broadcast_to(np.asarray(bound, float), (max_steps,)))
+    args = (p_correct, trans, reward_pre, reward_post, switch_step, error_cost, max_steps, stop)
+    lo, hi = -float(max(reward_pre[1], reward_post[1])), float(max(reward_pre[0], reward_post[0]))
+    for _ in range(n_bisect):
+        rho = (lo + hi) / 2
+        v0, _ = _backward_induction(rho, *args)
+        lo, hi = (rho, hi) if v0 - rho * start_cost > 0 else (lo, rho)
+    return (lo + hi) / 2
+
+
+def get_rc_policy_outcomes(
+    bound,
+    step_mean: float = RC_STEP_MEAN,
+    step_std: float = RC_STEP_STD,
+    start_cost: float = RC_START_COST,
+    error_cost: float = RC_ERROR_COST,
+    max_steps: int = MAX_STEPS,
+    budget: int = 1000,
+) -> dict:
+    """
+    Outcomes of a bound policy: accuracy, steps per trial and trials per step budget.
+
+    Propagates the density of Petey's position (drifting toward the correct side) through the
+    policy on the same grid as get_optimal_bounds; a response at shown position t has waited t
+    steps, a timeout max_steps.
+
+    Parameters
+    ----------
+    bound : float or (max_steps,) array
+        As in evaluate_rc_bound.
+    step_mean, step_std, start_cost, error_cost, max_steps
+        As in get_optimal_bounds.
+    budget : int
+        Steps per block.
+
+    Returns
+    -------
+    dict with ``p_correct``, ``p_error``, ``p_timeout`` (per trial), ``accuracy`` (correct among
+    responses), ``steps_waited`` (mean), ``steps_per_trial`` (waited + start + error charge),
+    ``trials_per_block`` (budget / steps_per_trial) and ``p_respond_by_step`` ((max_steps,) cumulative
+    probability of having responded by each shown position).
+    """
+    x, _, _ = _rc_grid(step_mean, step_std)
+    stop = _bound_to_stop(x, np.broadcast_to(np.asarray(bound, float), (max_steps,)))
+    kernel = scipy.stats.norm.pdf(x[None, :] - x[:, None], step_mean, step_std)
+    kernel /= kernel.sum(1, keepdims=True)
+    p = np.zeros(x.size)
+    p[x.size // 2] = 1.0
+    p_correct = p_error = steps = 0.0
+    p_stop = np.zeros(max_steps)
+    for tt in range(max_steps):
+        m = p * stop[tt]
+        tie = 0.5 * m[x == 0].sum()  # a response at the midpoint is a coin flip
+        p_correct += m[x > 0].sum() + tie
+        p_error += m[x < 0].sum() + tie
+        p_stop[tt] = m.sum()
+        steps += tt * p_stop[tt]
+        p = (p - m) @ kernel
+    p_timeout = p.sum()
+    steps += max_steps * p_timeout
+    steps_per_trial = steps + start_cost + error_cost * p_error
+    return {
+        "p_correct": p_correct,
+        "p_error": p_error,
+        "p_timeout": p_timeout,
+        "accuracy": p_correct / max(p_correct + p_error, 1e-300),
+        "steps_waited": steps,
+        "steps_per_trial": steps_per_trial,
+        "trials_per_block": budget / steps_per_trial,
+        "p_respond_by_step": np.cumsum(p_stop),
+    }
 
 
 # Mixtures of step means (zero-SNR trials allowed); defaults are Figure05S03's task.
