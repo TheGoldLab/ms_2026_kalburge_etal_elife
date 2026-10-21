@@ -13,3 +13,11 @@ data/processed/stopping_fits_round*/
 
 # Generated PDFs of archived notebooks
 notebooks/archive/*.pdf
+
+# Manuscript and review documents kept beside the code (not code; shared separately)
+/*.docx
+/*.pdf
+~$*
+
+# PsychoJS library copied in for local task runs (installed by PsychoPy, not ours)
+task/*/lib/
