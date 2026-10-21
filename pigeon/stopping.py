@@ -324,7 +324,7 @@ def get_plateau_edge_fit(fits, edge_max=PLATEAU_EDGE_MAX, rtol=0.02):
     Either way the subject's choices do not come from bound crossings (see
     get_plateau_at_limit), so figures draw these subject-blocks at the panel
     edge and leave them out of statistics (with counts reported). One
-    threshold for every figure (Figures 4, 5 and 5S2).
+    threshold for every figure that uses it (Figures 4, 5, 5S2 and 8).
 
     Parameters
     ----------
